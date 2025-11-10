@@ -12,14 +12,18 @@ type Querier interface {
 	ActivatePendingTenders(ctx context.Context) error
 	ApproveTender(ctx context.Context, id int32) error
 	CheckTenderParticipation(ctx context.Context, arg CheckTenderParticipationParams) (bool, error)
+	CheckUserHasAnyTenderParticipation(ctx context.Context, arg CheckUserHasAnyTenderParticipationParams) (bool, error)
 	CreateTender(ctx context.Context, arg CreateTenderParams) (Tender, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteTender(ctx context.Context, id int32) error
 	GetHistory(ctx context.Context) ([]Tender, error)
+	GetParticipantsForTender(ctx context.Context, tenderID int32) ([]int64, error)
+	GetStartingTenders(ctx context.Context) ([]GetStartingTendersRow, error)
 	GetTender(ctx context.Context, id int32) (Tender, error)
 	GetTenders(ctx context.Context) ([]Tender, error)
 	GetTendersForDeletion(ctx context.Context) ([]Tender, error)
 	GetTendersForSuppliers(ctx context.Context, arg GetTendersForSuppliersParams) ([]Tender, error)
+	GetTendersStartingIn5Minutes(ctx context.Context) ([]GetTendersStartingIn5MinutesRow, error)
 	GetUserByTelegramID(ctx context.Context, telegramID int64) (User, error)
 	JoinTender(ctx context.Context, arg JoinTenderParams) error
 	LeaveTender(ctx context.Context, arg LeaveTenderParams) error

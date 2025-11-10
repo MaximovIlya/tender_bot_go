@@ -1,4 +1,4 @@
-package organizer
+package handlers
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"tender_bot_go/db"
 	"tender_bot_go/menu"
 	"time"
@@ -15,38 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/telebot.v3"
-	"tender_bot_go/settings"
 )
-
-var config = settings.LoadSettings()
-
-var classificationNames = map[string]string{
-	"1":  "Сантехника",
-	"2":  "Вентиляция и кондиционирование",
-	"3":  "Отопление",
-	"4":  "Освещение",
-	"5":  "Розетки/выключатели",
-	"6":  "Камень натуральный",
-	"7":  "Керамогранит",
-	"8":  "Краска",
-	"9":  "Декоративная штукатурка",
-	"10": "Стеклянные перегородки и зеркала",
-	"11": "Двери",
-	"12": "Мебель индивидуального изготовления",
-	"13": "Мебель",
-	"14": "Портьеры",
-	"15": "Постельное белье",
-	"16": "Декор",
-	"17": "Обои",
-	"18": "Камины",
-	"19": "Посуда",
-	"20": "Озеленение",
-	"21": "Ковры",
-}
-
-var allCodes = []string{
-	"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21",
-}
 
 type OrganizerState int
 
@@ -60,333 +28,328 @@ const (
 	StateConditions
 )
 
-// Храним состояние для каждого пользователя
-var userStates = make(map[int64]OrganizerState)
-var userData = make(map[int64]map[string]string)
-
-// Храним данные для удаления тендеров
+var organizerStates = make(map[int64]OrganizerState)
+var organizerData = make(map[int64]map[string]string)
 var deleteTenderData = make(map[int64][]db.Tender)
 
-func OrganizerHandlers(bot *telebot.Bot, pool *pgxpool.Pool) {
+func RegisterOrganizerHandlers(bot *telebot.Bot, pool *pgxpool.Pool) {
 	queries := db.New(pool)
 
-	// Обработчик текстовых сообщений
-	bot.Handle(telebot.OnText, func(c telebot.Context) error {
-		
-		text := c.Text()
-		userID := c.Sender().ID
-
-		// Инициализируем данные пользователя, если их нет
-		if _, exists := userData[userID]; !exists {
-			userData[userID] = make(map[string]string)
-		}
-
-		if text == "Создать тендер" {
-			userStates[userID] = StateTitle
-			userData[userID] = make(map[string]string)
-			return c.Send("Введите название тендера:", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-		if text == "Мои тендеры" {
-			return sendTendersList(c, queries)
-		}
-		if text == "История" {
-			return sendHistory(c, queries)
-		}
-		if text == "Удалить тендер" {
-			return sendTendersForDeletion(c, queries)
-		}
-		if text == "Отмена" {
-			delete(userStates, userID)
-			delete(userData, userID)
-			return c.Send("Создание тендера отменено.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizer,
-			})
-		}
-
-		state := userStates[userID]
-		switch state {
-		case StateTitle:
-			userData[userID]["title"] = text
-			userStates[userID] = StateDescription
-			return c.Send("Введите описание тендера:", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		case StateDescription:
-			userData[userID]["description"] = text
-			userStates[userID] = StateStartPrice
-			return c.Send("Введите стартовую цену в рублях:", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		case StateStartPrice:
-			userData[userID]["start_price"] = text
-			userStates[userID] = StateStartDate
-			return c.Send("Введите дату и время начала тендера в формате ДД.ММ.ГГГГ ЧЧ:ММ:", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		case StateStartDate:
-			// Парсим дату в новом формате
-			location, err := time.LoadLocation("Europe/Moscow")
-			if err != nil {
-				location = time.UTC // fallback
-			}
-			startDateTime, err := time.ParseInLocation("02.01.2006 15:04", text, location)
-			if err != nil {
-				return c.Send("Введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ, например: 25.12.2024 14:30", &telebot.SendOptions{
-					ReplyMarkup: menu.MenuOrganizerCancel,
-				})
-			}
-
-			// Проверяем, что дата в будущем
-			if startDateTime.Before(time.Now()) {
-				return c.Send("Дата начала тендера должна быть в будущем!", &telebot.SendOptions{
-					ReplyMarkup: menu.MenuOrganizerCancel,
-				})
-			}
-
-			userData[userID]["start_date"] = text
-			userData[userID]["start_date_parsed"] = startDateTime.Format(time.RFC3339) // сохраняем для БД
-			userStates[userID] = StateClassification                                         // переходим к выбору классификации
-			markup := showSingleClassificationKeyboard(userID)
-			return c.Send("Выберите одну классификацию для тендера:", &telebot.SendOptions{
-				ReplyMarkup: markup,
-			})
-		case StateConditions:
-			// Обработка текста в состоянии Conditions
-			if text == "нет" || text == "Нет" {
-				userData[userID]["conditions_path"] = ""
-
-				// Сохраняем тендер в БД и получаем сообщение об успехе
-				successMessage, _, err := saveTenderToDB(userID, queries, c)
-				if err != nil {
-					return err
-				}
-
-				// Очищаем данные ПОСЛЕ использования
-				delete(userStates, userID)
-				delete(userData, userID)
-
-				return c.Send(successMessage, &telebot.SendOptions{
-					ParseMode:   telebot.ModeMarkdown, // ← ДОБАВЬТЕ ЭТУ СТРОКУ
-					ReplyMarkup: menu.MenuOrganizer,
-				})
-			} else {
-				return c.Send("Пожалуйста, отправьте файл или напишите 'нет'.", &telebot.SendOptions{
-					ReplyMarkup: menu.MenuOrganizerCancel,
-				})
-			}
-
-		default:
-			return nil
-		}
-	})
-
-	// Обработчики для выбора классификации организатором
+	// Обработчики inline кнопок для организатора
 	for code := range classificationNames {
 		classCode := code
 		bot.Handle(&telebot.InlineButton{Unique: "org_class_" + classCode}, func(c telebot.Context) error {
-			userID := c.Sender().ID
-
-			// Устанавливаем выбранную классификацию
-			userData[userID]["classification"] = classCode
-
-			// Создаём новую клавиатуру
-			markup := showSingleClassificationKeyboard(userID)
-
-			// Обновляем сообщение
-			return c.Edit("Выберите одну классификацию для тендера:", &telebot.SendOptions{
-				ReplyMarkup: markup,
-			})
+			return handleOrgClassification(c, queries, classCode)
 		})
 	}
 
-	// Обработчик для кнопки завершения выбора
-	doneOrgBtn := &telebot.InlineButton{Unique: "org_class_done"}
-	bot.Handle(doneOrgBtn, func(c telebot.Context) error {
-		userID := c.Sender().ID
-		selectedCode := userData[userID]["classification"]
-
-		if selectedCode == "" {
-			return c.Respond(&telebot.CallbackResponse{
-				Text:      "Выберите классификацию!",
-				ShowAlert: true,
-			})
-		}
-
-		// Получаем название выбранной классификации
-		selectedName := classificationNames[selectedCode]
-
-		// Переходим к следующему шагу
-		userStates[userID] = StateConditions
-
-		// Сначала отвечаем на callback
-		err := c.Respond()
-		if err != nil {
-			fmt.Printf("Ошибка при ответе на callback: %v\n", err)
-		}
-
-		// Затем отправляем новое сообщение с reply-клавиатурой
-		return c.Send(
-			fmt.Sprintf("Выбранная классификация: %s\n\nПрикрепите файл с условиями или отправьте 'нет'", selectedName),
-			&telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			},
-		)
+	bot.Handle(&telebot.InlineButton{Unique: "org_class_done"}, func(c telebot.Context) error {
+		return handleOrgClassificationDone(c, queries)
 	})
 
-	// Обработчик для кнопок удаления тендеров
 	bot.Handle(&menu.BtnDeleteTender, func(c telebot.Context) error {
-		// Получаем ID тендера из данных кнопки
-		tenderIDStr := c.Data()
-		tenderID, err := strconv.ParseInt(tenderIDStr, 10, 32)
-		if err != nil {
-			return c.Send("❌ Ошибка: неверный ID тендера")
-		}
-
-		// Удаляем тендер из БД
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		err = queries.DeleteTender(ctx, int32(tenderID))
-		if err != nil {
-			fmt.Printf("Ошибка при удалении тендера: %v\n", err)
-			return c.Send("❌ Не удалось удалить тендер", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizer,
-			})
-		}
-
-		// Очищаем кэш удаляемых тендеров для пользователя
-		userID := c.Sender().ID
-		delete(deleteTenderData, userID)
-
-		return c.Send("✅ Тендер успешно удален", &telebot.SendOptions{
-			ReplyMarkup: menu.MenuOrganizer,
-		})
+		return handleDeleteTender(c, queries)
 	})
 
-	// Отдельный обработчик для документов
+	// Обработчик документов для организатора
 	bot.Handle(telebot.OnDocument, func(c telebot.Context) error {
 		userID := c.Sender().ID
-		state := userStates[userID]
-
-		// Обрабатываем документ только если мы в состоянии Conditions
-		if state != StateConditions {
-			return nil
+		role := getUserRole(userID, queries)
+		if role == "organizer" {
+			return HandleOrganizerDocument(c, queries, userID)
 		}
-
-		// Инициализируем данные пользователя, если их нет
-		if _, exists := userData[userID]; !exists {
-			userData[userID] = make(map[string]string)
-		}
-
-		doc := c.Message().Document
-		if doc == nil {
-			return c.Send("Файл не найден. Попробуйте еще раз.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-
-		// создаём уникальное имя файла
-		timestamp := time.Now().UnixNano()
-		filename := fmt.Sprintf("%d_%s", timestamp, doc.FileName)
-		filePath := filepath.Join("files", filename)
-
-		// создаем директорию если её нет
-		if err := os.MkdirAll("files", 0755); err != nil {
-			fmt.Printf("Ошибка создания директории: %v\n", err)
-			return c.Send("Не удалось создать директорию для файлов.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-
-		// скачиваем файл
-		f, err := os.Create(filePath)
-		if err != nil {
-			fmt.Printf("Ошибка создания файла: %v\n", err)
-			return c.Send("Не удалось сохранить файл.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-		defer f.Close()
-
-		reader, err := bot.File(&doc.File)
-		if err != nil {
-			fmt.Printf("Ошибка получения файла от Telegram: %v\n", err)
-			return c.Send("Не удалось прочитать файл.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-
-		_, err = io.Copy(f, reader)
-		if err != nil {
-			fmt.Printf("Ошибка копирования файла: %v\n", err)
-			return c.Send("Ошибка при сохранении файла.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-
-		// Проверяем, что файл действительно создан
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("Файл не создан: %s\n", filePath)
-			return c.Send("Файл не был сохранен на сервере.", &telebot.SendOptions{
-				ReplyMarkup: menu.MenuOrganizerCancel,
-			})
-		}
-
-		userData[userID]["conditions_path"] = filePath
-		fmt.Printf("Файл сохранен: %s\n", filePath)
-
-		// Сохраняем тендер в БД и получаем сообщение об успехе
-		successMessage, _, err := saveTenderToDB(userID, queries, c)
-		if err != nil {
-			return err
-		}
-
-		// 1. Сначала отправляем сообщение о создании тендера
-		if err := c.Send(successMessage, &telebot.SendOptions{
-			ParseMode: telebot.ModeMarkdown,
-		}); err != nil {
-			return err
-		}
-
-		// 2. Затем отправляем сообщение "файл с условиями"
-		if err := c.Send("📎 Файл с условиями:"); err != nil {
-			return err
-		}
-
-		// 3. Проверяем существование файла перед отправкой
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("Файл не найден для отправки: %s\n", filePath)
-			return c.Send("❌ Файл не найден для отправки")
-		}
-
-		// 4. И только потом отправляем сам файл
-		fileToSend := &telebot.Document{
-			File:     telebot.FromDisk(filePath),
-			FileName: doc.FileName,
-		}
-
-		fmt.Printf("Пытаемся отправить файл: %s\n", filePath)
-		if err := c.Send(fileToSend); err != nil {
-			fmt.Printf("Ошибка при отправке файла: %v\n", err)
-			return c.Send("❌ Не удалось отправить файл. Попробуйте еще раз.")
-		}
-
-		fmt.Printf("Файл успешно отправлен: %s\n", filePath)
-
-		// Очищаем данные ПОСЛЕ использования
-		delete(userStates, userID)
-		delete(userData, userID)
-
-		// Возвращаем основное меню
-		return c.Send("Тендер успешно создан! Что хотите сделать дальше?", &telebot.SendOptions{
-			ParseMode: telebot.ModeMarkdown,
-		})
+		return nil
 	})
 }
 
-// Функция для отправки списка тендеров для удаления
+func HandleOrganizerText(c telebot.Context, queries *db.Queries, text string, userID int64) error {
+	// Инициализируем данные пользователя, если их нет
+	if _, exists := organizerData[userID]; !exists {
+		organizerData[userID] = make(map[string]string)
+	}
+
+	if text == "Создать тендер" {
+		organizerStates[userID] = StateTitle
+		organizerData[userID] = make(map[string]string)
+		return c.Send("Введите название тендера:", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+	if text == "Мои тендеры" {
+		return sendOrganizerTendersList(c, queries)
+	}
+	if text == "История" {
+		return sendOrganizerHistory(c, queries)
+	}
+	if text == "Удалить тендер" {
+		return sendTendersForDeletion(c, queries)
+	}
+	if text == "Отмена" {
+		delete(organizerStates, userID)
+		delete(organizerData, userID)
+		return c.Send("Создание тендера отменено.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizer,
+		})
+	}
+
+	state := organizerStates[userID]
+	switch state {
+	case StateTitle:
+		organizerData[userID]["title"] = text
+		organizerStates[userID] = StateDescription
+		return c.Send("Введите описание тендера:", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	case StateDescription:
+		organizerData[userID]["description"] = text
+		organizerStates[userID] = StateStartPrice
+		return c.Send("Введите стартовую цену в рублях:", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	case StateStartPrice:
+		organizerData[userID]["start_price"] = text
+		organizerStates[userID] = StateStartDate
+		return c.Send("Введите дату и время начала тендера в формате ДД.ММ.ГГГГ ЧЧ:ММ:", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	case StateStartDate:
+		location, err := time.LoadLocation("Europe/Moscow")
+		if err != nil {
+			location = time.UTC
+		}
+		startDateTime, err := time.ParseInLocation("02.01.2006 15:04", text, location)
+		if err != nil {
+			return c.Send("Введите дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ, например: 25.12.2024 14:30", &telebot.SendOptions{
+				ReplyMarkup: menu.MenuOrganizerCancel,
+			})
+		}
+
+		if startDateTime.Before(time.Now()) {
+			return c.Send("Дата начала тендера должна быть в будущем!", &telebot.SendOptions{
+				ReplyMarkup: menu.MenuOrganizerCancel,
+			})
+		}
+
+		organizerData[userID]["start_date"] = text
+		organizerData[userID]["start_date_parsed"] = startDateTime.Format(time.RFC3339)
+		organizerStates[userID] = StateClassification
+		markup := showOrganizerClassificationKeyboard(userID)
+		return c.Send("Выберите одну классификацию для тендера:", &telebot.SendOptions{
+			ReplyMarkup: markup,
+		})
+	case StateConditions:
+		if text == "нет" || text == "Нет" {
+			organizerData[userID]["conditions_path"] = ""
+			successMessage, _, err := saveTenderToDB(userID, queries, c)
+			if err != nil {
+				return err
+			}
+			delete(organizerStates, userID)
+			delete(organizerData, userID)
+			return c.Send(successMessage, &telebot.SendOptions{
+				ParseMode:   telebot.ModeMarkdown,
+				ReplyMarkup: menu.MenuOrganizer,
+			})
+		} else {
+			return c.Send("Пожалуйста, отправьте файл или напишите 'нет'.", &telebot.SendOptions{
+				ReplyMarkup: menu.MenuOrganizerCancel,
+			})
+		}
+	default:
+		return nil
+	}
+}
+
+func HandleOrganizerDocument(c telebot.Context, queries *db.Queries, userID int64) error {
+	state := organizerStates[userID]
+	if state != StateConditions {
+		return nil
+	}
+
+	if _, exists := organizerData[userID]; !exists {
+		organizerData[userID] = make(map[string]string)
+	}
+
+	doc := c.Message().Document
+	if doc == nil {
+		return c.Send("Файл не найден. Попробуйте еще раз.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+
+	timestamp := time.Now().UnixNano()
+	filename := fmt.Sprintf("%d_%s", timestamp, doc.FileName)
+	filePath := filepath.Join("files", filename)
+
+	if err := os.MkdirAll("files", 0755); err != nil {
+		fmt.Printf("Ошибка создания директории: %v\n", err)
+		return c.Send("Не удалось создать директорию для файлов.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		fmt.Printf("Ошибка создания файла: %v\n", err)
+		return c.Send("Не удалось сохранить файл.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+	defer f.Close()
+
+	reader, err := c.Bot().File(&doc.File)
+	if err != nil {
+		fmt.Printf("Ошибка получения файла от Telegram: %v\n", err)
+		return c.Send("Не удалось прочитать файл.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+
+	_, err = io.Copy(f, reader)
+	if err != nil {
+		fmt.Printf("Ошибка копирования файла: %v\n", err)
+		return c.Send("Ошибка при сохранении файла.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fmt.Printf("Файл не создан: %s\n", filePath)
+		return c.Send("Файл не был сохранен на сервере.", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		})
+	}
+
+	organizerData[userID]["conditions_path"] = filePath
+	fmt.Printf("Файл сохранен: %s\n", filePath)
+
+	successMessage, _, err := saveTenderToDB(userID, queries, c)
+	if err != nil {
+		return err
+	}
+
+	if err := c.Send(successMessage, &telebot.SendOptions{
+		ParseMode: telebot.ModeMarkdown,
+	}); err != nil {
+		return err
+	}
+
+	if err := c.Send("📎 Файл с условиями:"); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fmt.Printf("Файл не найден для отправки: %s\n", filePath)
+		return c.Send("❌ Файл не найден для отправки")
+	}
+
+	fileToSend := &telebot.Document{
+		File:     telebot.FromDisk(filePath),
+		FileName: doc.FileName,
+	}
+
+	if err := c.Send(fileToSend); err != nil {
+		fmt.Printf("Ошибка при отправке файла: %v\n", err)
+		return c.Send("❌ Не удалось отправить файл. Попробуйте еще раз.")
+	}
+
+	delete(organizerStates, userID)
+	delete(organizerData, userID)
+
+	return c.Send("Тендер успешно создан! Что хотите сделать дальше?", &telebot.SendOptions{
+		ParseMode: telebot.ModeMarkdown,
+	})
+}
+
+func handleOrgClassification(c telebot.Context, queries *db.Queries, classCode string) error {
+	userID := c.Sender().ID
+	organizerData[userID]["classification"] = classCode
+	markup := showOrganizerClassificationKeyboard(userID)
+	return c.Edit("Выберите одну классификацию для тендера:", &telebot.SendOptions{
+		ReplyMarkup: markup,
+	})
+}
+
+func handleOrgClassificationDone(c telebot.Context, queries *db.Queries) error {
+	userID := c.Sender().ID
+	selectedCode := organizerData[userID]["classification"]
+
+	if selectedCode == "" {
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "Выберите классификацию!",
+			ShowAlert: true,
+		})
+	}
+
+	selectedName := classificationNames[selectedCode]
+	organizerStates[userID] = StateConditions
+
+	err := c.Respond()
+	if err != nil {
+		fmt.Printf("Ошибка при ответе на callback: %v\n", err)
+	}
+
+	return c.Send(
+		fmt.Sprintf("Выбранная классификация: %s\n\nПрикрепите файл с условиями или отправьте 'нет'", selectedName),
+		&telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizerCancel,
+		},
+	)
+}
+
+func handleDeleteTender(c telebot.Context, queries *db.Queries) error {
+	tenderIDStr := c.Data()
+	tenderID, err := strconv.ParseInt(tenderIDStr, 10, 32)
+	if err != nil {
+		return c.Send("❌ Ошибка: неверный ID тендера")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = queries.DeleteTender(ctx, int32(tenderID))
+	if err != nil {
+		fmt.Printf("Ошибка при удалении тендера: %v\n", err)
+		return c.Send("❌ Не удалось удалить тендер", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuOrganizer,
+		})
+	}
+
+	userID := c.Sender().ID
+	delete(deleteTenderData, userID)
+
+	return c.Send("✅ Тендер успешно удален", &telebot.SendOptions{
+		ReplyMarkup: menu.MenuOrganizer,
+	})
+}
+
+func showOrganizerClassificationKeyboard(userID int64) *telebot.ReplyMarkup {
+	selectedCode := organizerData[userID]["classification"]
+
+	var rows [][]telebot.InlineButton
+	for _, code := range allCodes {
+		name := classificationNames[code]
+		text := name
+		if code == selectedCode {
+			text = "✅ " + name
+		}
+		btn := telebot.InlineButton{Unique: "org_class_" + code, Text: text}
+		rows = append(rows, []telebot.InlineButton{btn})
+	}
+
+	if selectedCode != "" {
+		rows = append(rows, []telebot.InlineButton{
+			{Unique: "org_class_done", Text: "Завершить выбор"},
+		})
+	}
+
+	markup := &telebot.ReplyMarkup{InlineKeyboard: rows}
+	return markup
+}
+
+// Остальные функции организатора (sendOrganizerTendersList, sendOrganizerHistory, sendTendersForDeletion, saveTenderToDB и т.д.)
+// нужно скопировать из вашего кода и заменить userData на organizerData
+
 func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -422,6 +385,8 @@ func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 
 		// Форматируем цену в финансовом формате
 		formattedPrice := formatPriceFloat(tender.StartPrice)
+
+		formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
         
 
 		// Форматируем статус с эмодзи
@@ -432,15 +397,19 @@ func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 			"📋 *Тендер*: %s\n\n"+
 				"📝 *Описание:* %s\n"+
 				"💰 *Стартовая цена:* %s руб.\n"+
+				"📈 *Текущая цена:* %s руб.\n"+
 				"📅 *Дата начала:* %s\n"+
 				"🗂️ *Классификация:* %s\n"+
+				"👥 *Участников:* %d\n"+
 				"%s *Статус:* %s\n\n"+
 				"🆔 ID: %d",
 			tender.Title,
 			tender.Description.String,
 			formattedPrice,
+			formattedCurrentPrice,
 			formattedDate,
 			classificationNames[tender.Classification.String],
+			tender.ParticipantsCount,
 			statusEmoji,
 			statusText,
 			tender.ID,
@@ -476,33 +445,9 @@ func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 	})
 }
 
-func showSingleClassificationKeyboard(userID int64) *telebot.ReplyMarkup {
-	selectedCode := userData[userID]["classification"] // берем одну выбранную классификацию
 
-	var rows [][]telebot.InlineButton
-	for _, code := range allCodes {
-		name := classificationNames[code]
-		text := name
-		if code == selectedCode {
-			text = "✅ " + name
-		}
-		btn := telebot.InlineButton{Unique: "org_class_" + code, Text: text}
-		rows = append(rows, []telebot.InlineButton{btn})
-	}
-
-	if selectedCode != "" {
-		rows = append(rows, []telebot.InlineButton{
-			{Unique: "org_class_done", Text: "Завершить выбор"},
-		})
-	}
-
-	markup := &telebot.ReplyMarkup{InlineKeyboard: rows}
-	return markup
-}
-
-// Вспомогательная функция для сохранения тендера в БД
 func saveTenderToDB(userID int64, queries *db.Queries, c telebot.Context) (string, int32, error) {
-	data := userData[userID]
+	data := organizerData[userID]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -580,7 +525,6 @@ func saveTenderToDB(userID int64, queries *db.Queries, c telebot.Context) (strin
 	return successMessage, tender.ID, nil
 }
 
-// Функция для отправки уведомления админам о новом тендере
 func sendTenderApprovalNotification(bot *telebot.Bot, adminIDs []int64, tenderData map[string]string, tenderID int32, tenderTitle string) {
 	// Форматируем дату для красивого вывода
 	parsedTime, _ := time.Parse(time.RFC3339, tenderData["start_date_parsed"])
@@ -627,8 +571,7 @@ func sendTenderApprovalNotification(bot *telebot.Bot, adminIDs []int64, tenderDa
 	}
 }
 
-// Функция для отправки списка тендеров
-func sendTendersList(c telebot.Context, queries *db.Queries) error {
+func sendOrganizerTendersList(c telebot.Context, queries *db.Queries) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -663,20 +606,26 @@ func sendTendersList(c telebot.Context, queries *db.Queries) error {
 		// Форматируем статус с эмодзи
 		statusEmoji, statusText := getStatusWithEmoji(tender.Status)
 
+		formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
+
 		// Создаем сообщение с информацией о тендере
 		tenderInfo := fmt.Sprintf(
 			"📋 *Тендер:* %s\n\n"+
 				"📝 *Описание:* %s\n"+
 				"💰 *Стартовая цена:* %s руб.\n"+
+				"📈 *Текущая цена:* %s руб.\n"+
 				"📅 *Дата начала:* %s\n"+
 				"🗂️ *Классификация:* %s\n"+
+				"👥 *Участников:* %d\n"+
 				"%s *Статус:* %s",
 
 			tender.Title,
 			tender.Description.String,
 			formattedPrice,
+			formattedCurrentPrice,
 			formattedDate,
 			classificationNames[tender.Classification.String],
+			tender.ParticipantsCount,
 			statusEmoji,
 			statusText,
 		)
@@ -739,61 +688,9 @@ func sendTendersList(c telebot.Context, queries *db.Queries) error {
 	})
 }
 
-// Функция для форматирования цены в финансовый формат (из строки)
-func formatPrice(priceStr string) string {
-	// Пытаемся преобразовать строку в число
-	price, err := strconv.ParseFloat(priceStr, 64)
-	if err != nil {
-		return priceStr // возвращаем как есть если не число
-	}
-	return formatPriceFloat(price)
-}
 
-// Функция для форматирования цены в финансовый формат (из float)
-func formatPriceFloat(price float64) string {
-	// Преобразуем в целое число если нет дробной части
-	if price == float64(int64(price)) {
-		return formatInteger(int64(price))
-	}
 
-	// Для дробных чисел форматируем с двумя знаками после запятой
-	intPart := int64(price)
-	fractional := int64((price - float64(intPart)) * 100)
-
-	return fmt.Sprintf("%s.%02d", formatInteger(intPart), fractional)
-}
-
-// Функция для форматирования целого числа с пробелами
-func formatInteger(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-
-	var parts []string
-	isNegative := n < 0
-	if isNegative {
-		n = -n
-	}
-
-	for n > 0 {
-		part := n % 1000
-		n = n / 1000
-		if n > 0 {
-			parts = append([]string{fmt.Sprintf("%03d", part)}, parts...)
-		} else {
-			parts = append([]string{fmt.Sprintf("%d", part)}, parts...)
-		}
-	}
-
-	result := strings.Join(parts, " ")
-	if isNegative {
-		result = "-" + result
-	}
-
-	return result
-}
-
-func sendHistory(c telebot.Context, queries *db.Queries) error {
+func sendOrganizerHistory(c telebot.Context, queries *db.Queries) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -822,25 +719,32 @@ func sendHistory(c telebot.Context, queries *db.Queries) error {
 		// Форматируем цену в финансовом формате
 		formattedPrice := formatPriceFloat(tender.StartPrice)
 
+		formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
+
 		// Форматируем статус с эмодзи
 		statusEmoji, statusText := getStatusWithEmoji(tender.Status)
 
 		// Создаем сообщение с информацией о тендере
 		tenderInfo := fmt.Sprintf(
-			"📋 *Тендер:* %s\n\n"+
+			"📋 *Тендер*: %s\n\n"+
 				"📝 *Описание:* %s\n"+
 				"💰 *Стартовая цена:* %s руб.\n"+
+				"📈 *Финальная цена:* %s руб.\n"+
 				"📅 *Дата начала:* %s\n"+
 				"🗂️ *Классификация:* %s\n"+
-				"%s *Статус:* %s",
-
+				"👥 *Участников:* %d\n"+
+				"%s *Статус:* %s\n\n"+
+				"🆔 ID: %d",
 			tender.Title,
 			tender.Description.String,
 			formattedPrice,
+			formattedCurrentPrice,
 			formattedDate,
 			classificationNames[tender.Classification.String],
+			tender.ParticipantsCount,
 			statusEmoji,
 			statusText,
+			tender.ID,
 		)
 
 		// Отправляем информацию о тендере
@@ -901,20 +805,3 @@ func sendHistory(c telebot.Context, queries *db.Queries) error {
 	})
 }
 
-// Функция для получения эмодзи и текста статуса
-func getStatusWithEmoji(status string) (string, string) {
-	switch status {
-	case "active":
-		return "🟢", "Активный"
-	case "completed":
-		return "🔴", "Завершен"
-	case "active_pending":
-		return "🟡", "Ожидает начала"
-	case "cancelled":
-		return "❌", "Отменен"
-	case "pending_approval":
-		return "🟠", "Ожидает подтверждения"
-	default:
-		return "❓", "Неизвестный"
-	}
-}

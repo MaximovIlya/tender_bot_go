@@ -53,6 +53,26 @@ func (q *Queries) CheckTenderParticipation(ctx context.Context, arg CheckTenderP
 	return is_participating, err
 }
 
+const checkUserHasAnyTenderParticipation = `-- name: CheckUserHasAnyTenderParticipation :one
+SELECT EXISTS(
+    SELECT 1 FROM tender_participants 
+    WHERE user_id = $1 
+    AND tender_id != $2  -- исключаем текущий тендер
+) as has_participation
+`
+
+type CheckUserHasAnyTenderParticipationParams struct {
+	UserID   int64 `json:"user_id"`
+	TenderID int32 `json:"tender_id"`
+}
+
+func (q *Queries) CheckUserHasAnyTenderParticipation(ctx context.Context, arg CheckUserHasAnyTenderParticipationParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkUserHasAnyTenderParticipation, arg.UserID, arg.TenderID)
+	var has_participation bool
+	err := row.Scan(&has_participation)
+	return has_participation, err
+}
+
 const createTender = `-- name: CreateTender :one
 INSERT INTO tenders(title, description, start_price, start_at, conditions_path, current_price, classification)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -134,6 +154,44 @@ func (q *Queries) GetHistory(ctx context.Context) ([]Tender, error) {
 			&i.LastBidAt,
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStartingTenders = `-- name: GetStartingTenders :many
+SELECT title, id, current_price, start_price 
+FROM tenders WHERE start_at <= NOW()
+AND status != 'active'
+`
+
+type GetStartingTendersRow struct {
+	Title        string  `json:"title"`
+	ID           int32   `json:"id"`
+	CurrentPrice float64 `json:"current_price"`
+	StartPrice   float64 `json:"start_price"`
+}
+
+func (q *Queries) GetStartingTenders(ctx context.Context) ([]GetStartingTendersRow, error) {
+	rows, err := q.db.Query(ctx, getStartingTenders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetStartingTendersRow{}
+	for rows.Next() {
+		var i GetStartingTendersRow
+		if err := rows.Scan(
+			&i.Title,
+			&i.ID,
+			&i.CurrentPrice,
+			&i.StartPrice,
 		); err != nil {
 			return nil, err
 		}
@@ -283,6 +341,41 @@ func (q *Queries) GetTendersForSuppliers(ctx context.Context, arg GetTendersForS
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getTendersStartingIn5Minutes = `-- name: GetTendersStartingIn5Minutes :many
+SELECT title, start_at, id
+FROM tenders 
+WHERE start_at IS NOT NULL 
+  AND start_at <= NOW() + INTERVAL '5 minutes'
+  AND start_at > NOW()
+ORDER BY start_at ASC
+`
+
+type GetTendersStartingIn5MinutesRow struct {
+	Title   string             `json:"title"`
+	StartAt pgtype.Timestamptz `json:"start_at"`
+	ID      int32              `json:"id"`
+}
+
+func (q *Queries) GetTendersStartingIn5Minutes(ctx context.Context) ([]GetTendersStartingIn5MinutesRow, error) {
+	rows, err := q.db.Query(ctx, getTendersStartingIn5Minutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetTendersStartingIn5MinutesRow{}
+	for rows.Next() {
+		var i GetTendersStartingIn5MinutesRow
+		if err := rows.Scan(&i.Title, &i.StartAt, &i.ID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

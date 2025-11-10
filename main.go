@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"tender_bot_go/db"
-	"tender_bot_go/handlers/organizer"
-	"tender_bot_go/handlers/admin"
-	"tender_bot_go/handlers/supplier"
+	"tender_bot_go/handlers"
 	"tender_bot_go/jobs"
 	"tender_bot_go/menu"
 	"tender_bot_go/settings"
@@ -109,9 +107,7 @@ func main() {
 	})
 
 	// ===== РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЕЙ =====
-	organizer.OrganizerHandlers(bot, pool)
-	admin.AdminHandlers(bot, pool)
-	supplier.SupplierHandlers(bot, pool)
+	handlers.RegisterHandlers(bot, pool)
 	
 
 	bot.Start()

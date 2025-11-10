@@ -1,0 +1,622 @@
+package handlers
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"tender_bot_go/db"
+	"tender_bot_go/menu"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"gopkg.in/telebot.v3"
+)
+
+type SupplierState int
+
+const (
+	StateNull SupplierState = iota
+	StateOrgName
+	StateINN
+	StateOGRN
+	StatePhone
+	StateSelectClassification
+	StateFIO
+)
+
+var supplierStates = make(map[int64]SupplierState)
+var supplierData = make(map[int64]map[string]string)
+
+func RegisterSupplierHandlers(bot *telebot.Bot, pool *pgxpool.Pool) {
+	queries := db.New(pool)
+
+	// Обработчики inline кнопок для поставщика
+	for code := range classificationNames {
+		classCode := code
+		bot.Handle(&telebot.InlineButton{Unique: "supplier_class_" + classCode}, func(c telebot.Context) error {
+			return handleSupplierClassification(c, classCode)
+		})
+	}
+
+	bot.Handle(&telebot.InlineButton{Unique: "supplier_class_done"}, func(c telebot.Context) error {
+		return handleSupplierClassificationDone(c)
+	})
+
+	bot.Handle(&menu.BtnJoinTender, func(c telebot.Context) error {
+		return handleJoinTender(c, queries)
+	})
+
+	bot.Handle(&menu.BtnLeaveTender, func(c telebot.Context) error {
+		return handleLeaveTender(c, queries)
+	})
+}
+
+func HandleSupplierText(c telebot.Context, queries *db.Queries, text string, userID int64) error {
+	if _, exists := supplierData[userID]; !exists {
+		supplierData[userID] = make(map[string]string)
+	}
+
+	if text == "Регистрация" {
+		supplierStates[userID] = StateOrgName
+		supplierData[userID] = make(map[string]string)
+		return c.Send("Введите наименование вашей организации:")
+	}
+
+	if text == "Тендеры" {
+		return sendSupplierTendersList(c, queries, userID)
+	}
+
+	state := supplierStates[userID]
+	switch state {
+	case StateOrgName:
+		supplierData[userID]["org_name"] = text
+		supplierStates[userID] = StateINN
+		return c.Send("Введите ИНН организации:")
+	case StateINN:
+		if len(text) != 10 && len(text) != 12 {
+			return c.Send("ИНН должен содержать 10 или 12 цифр. Попробуйте снова:")
+		}
+		supplierData[userID]["inn"] = text
+		supplierStates[userID] = StateOGRN
+		return c.Send("Введите ОГРН организации:")
+	case StateOGRN:
+		if len(text) != 13 && len(text) != 15 {
+			return c.Send("ОГРН должен содержать 13 или 15 цифр. Попробуйте снова:")
+		}
+		supplierData[userID]["ogrn"] = text
+		supplierStates[userID] = StatePhone
+		return c.Send("Введите контактный телефон:")
+	case StatePhone:
+		phone := ""
+		for _, r := range text {
+			if r >= '0' && r <= '9' {
+				phone += string(r)
+			}
+		}
+		if len(phone) < 10 {
+			return c.Send("Введите корректный номер телефона:")
+		}
+		supplierData[userID]["phone"] = phone
+		supplierData[userID]["classifications"] = ""
+		supplierStates[userID] = StateSelectClassification
+		markup := showSupplierClassificationKeyboard(userID)
+		return c.Send("Выберите до двух классификаций вашей организации:", markup)
+	case StateFIO:
+		supplierData[userID]["fio"] = text
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := queries.UpdateUser(ctx, db.UpdateUserParams{
+			TelegramID: userID,
+			OrganizationName: pgtype.Text{
+				String: supplierData[userID]["org_name"],
+				Valid:  true,
+			},
+			Inn: pgtype.Text{
+				String: supplierData[userID]["inn"],
+				Valid:  true,
+			},
+			Ogrn: pgtype.Text{
+				String: supplierData[userID]["ogrn"],
+				Valid:  true,
+			},
+			PhoneNumber: pgtype.Text{
+				String: supplierData[userID]["phone"],
+				Valid:  true,
+			},
+			Name: pgtype.Text{
+				String: supplierData[userID]["fio"],
+				Valid:  true,
+			},
+			Classification: pgtype.Text{
+				String: supplierData[userID]["classifications"],
+				Valid:  true,
+			},
+		})
+		if err != nil {
+			return c.Send("Ошибка при сохранении данных. Попробуйте снова.")
+		}
+
+		delete(supplierStates, userID)
+		delete(supplierData, userID)
+		return c.Send("✅ Регистрация завершена!", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuSupplierRegistered,
+		})
+	default:
+		return nil
+	}
+}
+
+func handleSupplierClassification(c telebot.Context, classCode string) error {
+	userID := c.Sender().ID
+	if _, ok := supplierData[userID]; !ok {
+		supplierData[userID] = make(map[string]string)
+	}
+
+	data := supplierData[userID]["classifications"]
+	selected := strings.Split(data, ",")
+	selectedSet := make(map[string]bool)
+	for _, s := range selected {
+		if s != "" {
+			selectedSet[s] = true
+		}
+	}
+
+	if selectedSet[classCode] {
+		delete(selectedSet, classCode)
+	} else {
+		if len(selectedSet) >= 2 {
+			return c.Respond(&telebot.CallbackResponse{
+				Text:      "Можно выбрать только две классификации!",
+				ShowAlert: true,
+			})
+		}
+		selectedSet[classCode] = true
+	}
+
+	var newSelected []string
+	for _, code := range allCodes {
+		if selectedSet[code] {
+			newSelected = append(newSelected, code)
+		}
+	}
+	supplierData[userID]["classifications"] = strings.Join(newSelected, ",")
+
+	markup := showSupplierClassificationKeyboard(userID)
+
+	msg := c.Message()
+	currentText := "Выберите до двух классификаций вашей организации:"
+	if msg != nil && msg.Text != "" {
+		currentText = msg.Text
+	}
+
+	return c.Edit(currentText, &telebot.SendOptions{ReplyMarkup: markup})
+}
+
+func handleSupplierClassificationDone(c telebot.Context) error {
+	userID := c.Sender().ID
+	data := supplierData[userID]["classifications"]
+
+	if data == "" {
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "Выберите хотя бы одну классификацию!",
+			ShowAlert: true,
+		})
+	}
+
+	codes := strings.Split(data, ",")
+	var selectedNames []string
+	for _, code := range codes {
+		if name, ok := classificationNames[code]; ok {
+			selectedNames = append(selectedNames, name)
+		}
+	}
+
+	supplierStates[userID] = StateFIO
+
+	return c.Edit(
+		fmt.Sprintf("Выбранные классификации:\n%s\n\nВведите ФИО участника:", strings.Join(selectedNames, ", ")),
+		&telebot.SendOptions{
+			ReplyMarkup: nil,
+		},
+	)
+}
+
+func handleJoinTender(c telebot.Context, queries *db.Queries) error {
+	data := c.Data()
+	parts := strings.Split(data, "|")
+	if len(parts) != 2 {
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Ошибка: неверный формат данных",
+			ShowAlert: true,
+		})
+	}
+
+	tenderID, _ := strconv.ParseInt(parts[0], 10, 32)
+	userID, _ := strconv.ParseInt(parts[1], 10, 64)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Проверяем, участвует ли пользователь уже в других тендерах
+	hasOtherParticipation, err := queries.CheckUserHasAnyTenderParticipation(ctx, db.CheckUserHasAnyTenderParticipationParams{
+		UserID:   userID,
+		TenderID: int32(tenderID),
+	})
+	if err != nil {
+		fmt.Printf("Ошибка при проверке участия пользователя: %v\n", err)
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Ошибка при проверке участия",
+			ShowAlert: true,
+		})
+	}
+
+	if hasOtherParticipation {
+		return c.Respond(&telebot.CallbackResponse{
+			Text: "❌ Вы уже участвуете в другом тендере. Для участия в этом тендере необходимо сначала отменить участие в текущем тендере.",
+			ShowAlert: true,
+		})
+	}
+
+	// Проверяем, не участвует ли пользователь уже в этом тендере
+	isAlreadyParticipating, err := queries.CheckTenderParticipation(ctx, db.CheckTenderParticipationParams{
+		TenderID: int32(tenderID),
+		UserID:   userID,
+	})
+	if err != nil {
+		fmt.Printf("Ошибка при проверке участия в тендере: %v\n", err)
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Ошибка при проверке участия",
+			ShowAlert: true,
+		})
+	}
+
+	if isAlreadyParticipating {
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Вы уже участвуете в этом тендере",
+			ShowAlert: true,
+		})
+	}
+
+	// Добавляем пользователя в тендер
+	err = queries.JoinTender(ctx, db.JoinTenderParams{
+		ID:     int32(tenderID),
+		UserID: userID,
+	})
+	if err != nil {
+		fmt.Printf("Ошибка при попытке участвовать в тендере: %v\n", err)
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Не удалось присоединиться к тендеру",
+			ShowAlert: true,
+		})
+	}
+
+	// Получаем актуальную информацию о тендере для обновления сообщения
+	tender, err := queries.GetTender(ctx, int32(tenderID))
+	if err != nil {
+		fmt.Printf("Ошибка при получении информации о тендере: %v\n", err)
+		// Если не удалось получить тендер, все равно сообщаем об успехе
+		return c.Respond(&telebot.CallbackResponse{
+			Text: "✅ Вы участвуете в тендере!",
+		})
+	}
+
+	// Обновляем сообщение с новой кнопкой
+	return updateTenderMessage(c, tender, userID, true)
+}
+
+func handleLeaveTender(c telebot.Context, queries *db.Queries) error {
+	data := c.Data()
+	parts := strings.Split(data, "|")
+	if len(parts) != 2 {
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Ошибка: неверный формат данных",
+			ShowAlert: true,
+		})
+	}
+
+	tenderID, _ := strconv.ParseInt(parts[0], 10, 32)
+	userID, _ := strconv.ParseInt(parts[1], 10, 64)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := queries.LeaveTender(ctx, db.LeaveTenderParams{
+		ID:     int32(tenderID),
+		UserID: userID,
+	})
+	if err != nil {
+		fmt.Printf("Ошибка при отмене участия в тендере: %v\n", err)
+		return c.Respond(&telebot.CallbackResponse{
+			Text:      "❌ Не удалось отменить участие",
+			ShowAlert: true,
+		})
+	}
+
+	tender, err := queries.GetTender(ctx, int32(tenderID))
+	if err != nil {
+		return c.Respond(&telebot.CallbackResponse{
+			Text: "❌ Вы больше не участвуете в тендере",
+		})
+	}
+
+	return updateTenderMessage(c, tender, userID, false)
+}
+
+func showSupplierClassificationKeyboard(userID int64) *telebot.ReplyMarkup {
+	selectedCodes := strings.Split(supplierData[userID]["classifications"], ",")
+	selectedSet := make(map[string]bool)
+	for _, code := range selectedCodes {
+		if code != "" {
+			selectedSet[code] = true
+		}
+	}
+
+	var rows [][]telebot.InlineButton
+	for _, code := range allCodes {
+		name := classificationNames[code]
+		text := name
+		if selectedSet[code] {
+			text = "✅ " + name
+		}
+		btn := telebot.InlineButton{Unique: "supplier_class_" + code, Text: text}
+		rows = append(rows, []telebot.InlineButton{btn})
+	}
+
+	if len(selectedSet) > 0 {
+		rows = append(rows, []telebot.InlineButton{{Unique: "supplier_class_done", Text: "Завершить выбор"}})
+	}
+
+	markup := &telebot.ReplyMarkup{InlineKeyboard: rows}
+	return markup
+}
+
+// Остальные функции поставщика (sendSupplierTendersList, updateTenderMessage и т.д.)
+// нужно скопировать из вашего кода
+
+func sendSupplierTendersList(c telebot.Context, queries *db.Queries, userId int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	user, err := queries.GetUserByTelegramID(ctx, userId)
+	if err != nil {
+		fmt.Printf("Ошибка получения информации о пользователе: %v\n", err)
+		return c.Send("Не удалось получить информацию о пользователе", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuSupplierRegistered,
+		})
+	}
+
+	classifications := strings.Split(user.Classification.String, ",")
+	tenders, err := queries.GetTendersForSuppliers(ctx, db.GetTendersForSuppliersParams{
+		Classification: pgtype.Text{
+			String: classifications[0],
+			Valid:  true,
+		},
+		Classification_2: pgtype.Text{
+			String: classifications[1],
+			Valid:  true,
+		},
+	})
+
+	if err != nil {
+		fmt.Printf("Ошибка получения тендеров: %v\n", err)
+		return c.Send("Не удалось получить список тендеров", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuSupplierRegistered,
+		})
+	}
+
+	if len(tenders) == 0 {
+		return c.Send("Нет доступных тендеров", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuSupplierRegistered,
+		})
+	}
+
+	for _, tender := range tenders {
+		// Проверяем, участвует ли пользователь в тендере
+		isParticipating, err := queries.CheckTenderParticipation(ctx, db.CheckTenderParticipationParams{
+			TenderID: tender.ID,
+			UserID:   userId,
+		})
+		if err != nil {
+			fmt.Printf("Ошибка проверки участия в тендере %d: %v\n", tender.ID, err)
+			isParticipating = false
+		}
+
+		// Форматируем дату для красивого вывода
+		var formattedDate string
+		if tender.StartAt.Valid {
+			formattedDate = tender.StartAt.Time.Format("02.01.2006 15:04")
+		} else {
+			formattedDate = "не указана"
+		}
+
+		// Форматируем цену в финансовом формате
+		formattedPrice := formatPriceFloat(tender.StartPrice)
+
+		// Форматируем статус с эмодзи
+		statusEmoji, statusText := getStatusWithEmoji(tender.Status)
+
+		// Создаем сообщение с информацией о тендере
+		tenderInfo := fmt.Sprintf(
+			"📋 *Тендер:* %s\n\n"+
+				"📝 *Описание:* %s\n"+
+				"💰 *Стартовая цена:* %s руб.\n"+
+				"📅 *Дата начала:* %s\n"+
+				"🗂️ *Классификация:* %s\n"+
+				"%s *Статус:* %s\n\n"+
+				"👥 *Участников:* %d",
+
+			tender.Title,
+			tender.Description.String,
+			formattedPrice,
+			formattedDate,
+			classificationNames[tender.Classification.String],
+			statusEmoji,
+			statusText,
+			tender.ParticipantsCount,
+		)
+
+		// Создаем кнопку в зависимости от участия пользователя
+		var actionButton telebot.InlineButton
+		if isParticipating {
+			actionButton = telebot.InlineButton{
+				Unique: "leave_tender",
+				Text:   "❌ Отменить участие",
+				Data:   fmt.Sprintf("%d|%d", tender.ID, userId),
+			}
+		} else {
+			actionButton = telebot.InlineButton{
+				Unique: "join_tender",
+				Text:   "📝 Участвовать в тендере",
+				Data:   fmt.Sprintf("%d|%d", tender.ID, userId),
+			}
+		}
+
+		// Отправляем информацию о тендере
+		msg, err := c.Bot().Send(c.Sender(), tenderInfo, &telebot.SendOptions{
+			ParseMode: telebot.ModeMarkdown,
+			ReplyMarkup: &telebot.ReplyMarkup{
+				InlineKeyboard: [][]telebot.InlineButton{
+					{actionButton},
+				},
+			},
+		})
+		if err != nil {
+			fmt.Printf("Ошибка при отправке информации о тендере: %v\n", err)
+			continue
+		}
+
+		// Сохраняем ID сообщения для возможного обновления кнопки
+		_ = msg // можно сохранить в кеш если нужно обновлять сообщение
+
+		// Если есть прикрепленный файл, отправляем его
+		if tender.ConditionsPath.Valid && tender.ConditionsPath.String != "" {
+			filePath := tender.ConditionsPath.String
+
+			// Проверяем существование файла
+			if _, err := os.Stat(filePath); err == nil {
+				// Отправляем сообщение о файле
+				if err := c.Send("📎 Файл с условиями тендера:"); err != nil {
+					fmt.Printf("Ошибка при отправке сообщения о файле: %v\n", err)
+					continue
+				}
+
+				// Отправляем сам файл
+				fileName := filepath.Base(filePath)
+				fileToSend := &telebot.Document{
+					File:     telebot.FromDisk(filePath),
+					FileName: fileName,
+				}
+
+				if err := c.Send(fileToSend); err != nil {
+					fmt.Printf("Ошибка при отправке файла тендера: %v\n", err)
+				}
+			} else {
+				fmt.Printf("Файл не найден: %s\n", filePath)
+				if err := c.Send("❌ Файл условий недоступен"); err != nil {
+					fmt.Printf("Ошибка при отправке сообщения об отсутствии файла: %v\n", err)
+				}
+			}
+		} else {
+			// Если файла нет, отправляем сообщение об этом
+			if err := c.Send("📭 Файл условий не прикреплен"); err != nil {
+				fmt.Printf("Ошибка при отправке сообщения об отсутствии файла: %v\n", err)
+			}
+		}
+
+		// Добавляем разделитель между тендерами
+		if err := c.Send("➖➖➖➖➖➖➖➖➖➖"); err != nil {
+			fmt.Printf("Ошибка при отправке разделителя: %v\n", err)
+		}
+
+		// Небольшая задержка между отправками чтобы не превысить лимиты Telegram
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return c.Send(fmt.Sprintf("✅ Всего тендеров: %d", len(tenders)), &telebot.SendOptions{
+		ReplyMarkup: menu.MenuSupplierRegistered,
+	})
+}
+
+func updateTenderMessage(c telebot.Context, tender db.Tender, userID int64,  justJoined bool) error {
+	// Форматируем дату
+	var formattedDate string
+	if tender.StartAt.Valid {
+		formattedDate = tender.StartAt.Time.Format("02.01.2006 15:04")
+	} else {
+		formattedDate = "не указана"
+	}
+
+	// Форматируем цену
+	formattedPrice := formatPriceFloat(tender.StartPrice)
+
+	// Форматируем статус с эмодзи
+	statusEmoji, statusText := getStatusWithEmoji(tender.Status)
+
+	// Создаем сообщение с информацией о тендере
+	tenderInfo := fmt.Sprintf(
+		"📋 *Тендер:* %s\n\n"+
+			"📝 *Описание:* %s\n"+
+			"💰 *Стартовая цена:* %s руб.\n"+
+			"📅 *Дата начала:* %s\n"+
+			"🗂️ *Классификация:* %s\n"+
+			"%s *Статус:* %s\n\n"+
+			"👥 *Участников:* %d",
+
+		tender.Title,
+		tender.Description.String,
+		formattedPrice,
+		formattedDate,
+		classificationNames[tender.Classification.String],
+		statusEmoji,
+		statusText,
+		tender.ParticipantsCount,
+	)
+
+	// Создаем кнопку в зависимости от участия пользователя
+	var actionButton telebot.InlineButton
+	if justJoined {
+		// Если только что присоединились - показываем кнопку "Отменить участие"
+		actionButton = telebot.InlineButton{
+			Unique: "leave_tender",
+			Text:   "❌ Отменить участие",
+			Data:   fmt.Sprintf("%d|%d", tender.ID, userID),
+		}
+	} else {
+		// Если только что отменили участие - показываем кнопку "Участвовать"
+		actionButton = telebot.InlineButton{
+			Unique: "join_tender",
+			Text:   "📝 Участвовать в тендере",
+			Data:   fmt.Sprintf("%d|%d", tender.ID, userID),
+		}
+	}
+
+	// Обновляем сообщение
+	_, err := c.Bot().Edit(c.Message(), tenderInfo, &telebot.SendOptions{
+		ParseMode: telebot.ModeMarkdown,
+		ReplyMarkup: &telebot.ReplyMarkup{
+			InlineKeyboard: [][]telebot.InlineButton{
+				{actionButton},
+			},
+		},
+	})
+	if err != nil {
+		fmt.Printf("Ошибка при обновлении сообщения: %v\n", err)
+		// Если не удалось обновить сообщение, отправляем текстовый ответ
+		if justJoined {
+			return c.Respond(&telebot.CallbackResponse{
+				Text: "✅ Вы теперь участвуете в тендере!",
+			})
+		} else {
+			return c.Respond(&telebot.CallbackResponse{
+				Text: "❌ Вы больше не участвуете в тендере",
+			})
+		}
+	}
+
+	// Отправляем пустой callback response чтобы убрать "часики"
+	return c.Respond()
+}

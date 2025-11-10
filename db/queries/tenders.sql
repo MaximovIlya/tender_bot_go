@@ -6,6 +6,15 @@ RETURNING *;
 -- name: GetTenders :many
 SELECT * FROM tenders ORDER BY created_at DESC;
 
+-- name: GetTendersStartingIn5Minutes :many
+SELECT title, start_at, id
+FROM tenders 
+WHERE start_at IS NOT NULL 
+  AND start_at <= NOW() + INTERVAL '5 minutes'
+  AND start_at > NOW()
+ORDER BY start_at ASC;
+
+
 -- name: GetHistory :many 
 SELECT * FROM tenders WHERE status = 'completed' ORDER BY created_at DESC;
 
@@ -22,6 +31,11 @@ DELETE FROM tenders WHERE id = $1;
 UPDATE tenders 
 SET status = 'active_pending'
 WHERE id = $1;
+
+-- name: GetStartingTenders :many
+SELECT title, id, current_price, start_price 
+FROM tenders WHERE start_at <= NOW()
+AND status != 'active';
 
 -- name: ActivatePendingTenders :exec
 UPDATE tenders 
@@ -65,3 +79,11 @@ SELECT EXISTS(
 
 -- name: GetTender :one
 SELECT * FROM tenders WHERE id = $1;
+
+
+-- name: CheckUserHasAnyTenderParticipation :one
+SELECT EXISTS(
+    SELECT 1 FROM tender_participants 
+    WHERE user_id = $1 
+    AND tender_id != $2  -- исключаем текущий тендер
+) as has_participation;
