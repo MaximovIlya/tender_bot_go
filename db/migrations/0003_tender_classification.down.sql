@@ -1,0 +1,1 @@
+ALTER TABLE tenders DROP classification;

@@ -1,0 +1,1 @@
+ALTER TABLE tender_participants DROP CONSTRAINT unique_tender_participant;

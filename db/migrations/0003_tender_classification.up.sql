@@ -1,0 +1,1 @@
+ALTER TABLE tenders ADD classification VARCHAR(255);
