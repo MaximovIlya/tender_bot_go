@@ -21,6 +21,7 @@ var MenuSupplierRegistered = &telebot.ReplyMarkup {
 	ReplyKeyboard: [][]telebot.ReplyButton{
         {
             {Text: "Тендеры"},
+            {Text: "Подать заявку"},
 		},
     },
     ResizeKeyboard: true,
@@ -44,14 +45,7 @@ var MenuSupplierUnregistered = &telebot.ReplyMarkup {
     ResizeKeyboard: true,
 }
 
-var MenuBidTender = &telebot.ReplyMarkup{
-    ReplyKeyboard: [][]telebot.ReplyButton{
-        {
-            {Text: "Подать заявку"},
-        },
-    },
-    ResizeKeyboard: true,
-}
+
 
 func MenuAdmin() *telebot.ReplyMarkup {
 	menu := &telebot.ReplyMarkup{

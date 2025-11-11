@@ -6,6 +6,9 @@ RETURNING *;
 -- name: GetTenders :many
 SELECT * FROM tenders ORDER BY created_at DESC;
 
+-- name: GetTenderById :one
+SELECT * FROM tenders WHERE id = $1;
+
 -- name: GetTendersStartingIn5Minutes :many
 SELECT title, start_at, id
 FROM tenders 

@@ -228,6 +228,31 @@ func (q *Queries) GetTender(ctx context.Context, id int32) (Tender, error) {
 	return i, err
 }
 
+const getTenderById = `-- name: GetTenderById :one
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE id = $1
+`
+
+func (q *Queries) GetTenderById(ctx context.Context, id int32) (Tender, error) {
+	row := q.db.QueryRow(ctx, getTenderById, id)
+	var i Tender
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.StartPrice,
+		&i.StartAt,
+		&i.Status,
+		&i.ConditionsPath,
+		&i.CreatedAt,
+		&i.Classification,
+		&i.ParticipantsCount,
+		&i.LastBidAt,
+		&i.CurrentPrice,
+		&i.MinBidDecrease,
+	)
+	return i, err
+}
+
 const getTenders = `-- name: GetTenders :many
 SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders ORDER BY created_at DESC
 `

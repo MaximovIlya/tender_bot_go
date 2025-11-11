@@ -33,3 +33,15 @@ func (q *Queries) GetParticipantsForTender(ctx context.Context, tenderID int32) 
 	}
 	return items, nil
 }
+
+const getTenderFromParticipants = `-- name: GetTenderFromParticipants :one
+select (tender_id) from tender_participants 
+where user_id = $1
+`
+
+func (q *Queries) GetTenderFromParticipants(ctx context.Context, userID int64) (int32, error) {
+	row := q.db.QueryRow(ctx, getTenderFromParticipants, userID)
+	var tender_id int32
+	err := row.Scan(&tender_id)
+	return tender_id, err
+}

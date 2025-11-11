@@ -78,7 +78,7 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 			for _, userId := range userIds {
 				_, err := bot.Send(&telebot.User{ID: userId}, messageForUsers, &telebot.SendOptions{
 					ParseMode: telebot.ModeMarkdown,
-					ReplyMarkup: menu.MenuBidTender,
+					ReplyMarkup: menu.MenuSupplierRegistered,
 				})
 				if err != nil {
 					log.Errorf("Failed to send notification to user %d: %v", userId, err)

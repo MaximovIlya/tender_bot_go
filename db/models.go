@@ -24,6 +24,14 @@ type Tender struct {
 	MinBidDecrease    float64            `json:"min_bid_decrease"`
 }
 
+type TenderBid struct {
+	ID       int32              `json:"id"`
+	TenderID int32              `json:"tender_id"`
+	UserID   int64              `json:"user_id"`
+	Amount   float64            `json:"amount"`
+	BidTime  pgtype.Timestamptz `json:"bid_time"`
+}
+
 type TenderParticipant struct {
 	ID       int32 `json:"id"`
 	TenderID int32 `json:"tender_id"`

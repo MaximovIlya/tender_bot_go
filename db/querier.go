@@ -13,6 +13,7 @@ type Querier interface {
 	ApproveTender(ctx context.Context, id int32) error
 	CheckTenderParticipation(ctx context.Context, arg CheckTenderParticipationParams) (bool, error)
 	CheckUserHasAnyTenderParticipation(ctx context.Context, arg CheckUserHasAnyTenderParticipationParams) (bool, error)
+	CreateBid(ctx context.Context, arg CreateBidParams) error
 	CreateTender(ctx context.Context, arg CreateTenderParams) (Tender, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteTender(ctx context.Context, id int32) error
@@ -20,13 +21,18 @@ type Querier interface {
 	GetParticipantsForTender(ctx context.Context, tenderID int32) ([]int64, error)
 	GetStartingTenders(ctx context.Context) ([]GetStartingTendersRow, error)
 	GetTender(ctx context.Context, id int32) (Tender, error)
+	GetTenderById(ctx context.Context, id int32) (Tender, error)
+	GetTenderFromParticipants(ctx context.Context, userID int64) (int32, error)
 	GetTenders(ctx context.Context) ([]Tender, error)
 	GetTendersForDeletion(ctx context.Context) ([]Tender, error)
 	GetTendersForSuppliers(ctx context.Context, arg GetTendersForSuppliersParams) ([]Tender, error)
 	GetTendersStartingIn5Minutes(ctx context.Context) ([]GetTendersStartingIn5MinutesRow, error)
+	GetUserBidCount(ctx context.Context, arg GetUserBidCountParams) (int64, error)
+	GetUserBidsForTender(ctx context.Context, arg GetUserBidsForTenderParams) ([]TenderBid, error)
 	GetUserByTelegramID(ctx context.Context, telegramID int64) (User, error)
 	JoinTender(ctx context.Context, arg JoinTenderParams) error
 	LeaveTender(ctx context.Context, arg LeaveTenderParams) error
+	UpdateTenderCurrentPrice(ctx context.Context, arg UpdateTenderCurrentPriceParams) error
 	UpdateUser(ctx context.Context, arg UpdateUserParams) error
 }
 
