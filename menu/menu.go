@@ -25,6 +25,7 @@ var MenuSupplierRegistered = &telebot.ReplyMarkup {
 		},
     },
     ResizeKeyboard: true,
+    OneTimeKeyboard: false,
 }
 
 var MenuOrganizerCancel = &telebot.ReplyMarkup{

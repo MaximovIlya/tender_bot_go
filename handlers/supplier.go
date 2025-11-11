@@ -296,16 +296,32 @@ func bidTender(c telebot.Context, queries *db.Queries) error {
 	// Получаем тендер, в котором участвует пользователь
 	tenderId, err := queries.GetTenderFromParticipants(context.Background(), userId)
 	if err != nil {
-		return c.Send("❌ Вы не участвуете ни в одном тендере или произошла ошибка.")
+		errorMsg := "❌ Вы не участвуете ни в одном тендере или произошла ошибка."
+		msg, err := c.Bot().Send(c.Sender(), errorMsg)
+		if err == nil {
+			messageManager.AddMessage(userId, msg.ID)
+		}
+		return err
 	}
+	
 	tender, err := queries.GetTenderById(context.Background(), tenderId)
 	if err != nil {
-		return c.Send("❌ Произошла ошибка при получении информации о тендере. Попробуйте снова.")
+		errorMsg := "❌ Произошла ошибка при получении информации о тендере. Попробуйте снова."
+		msg, err := c.Bot().Send(c.Sender(), errorMsg)
+		if err == nil {
+			messageManager.AddMessage(userId, msg.ID)
+		}
+		return err
 	}
 
 	// Проверяем статус тендера
 	if tender.Status != "active" {
-		return c.Send("❌ Тендер не активен. Подача ставок невозможна.")
+		errorMsg := "❌ Тендер не активен. Подача ставок невозможна."
+		msg, err := c.Bot().Send(c.Sender(), errorMsg)
+		if err == nil {
+			messageManager.AddMessage(userId, msg.ID)
+		}
+		return fmt.Errorf(errorMsg)
 	}
 
 	// Получаем предыдущие ставки пользователя в этом тендере
@@ -375,6 +391,12 @@ func bidTender(c telebot.Context, queries *db.Queries) error {
 	})
 	
 	if err != nil {
+		// Сохраняем ID сообщения об ошибке, если отправка не удалась
+		errorMsg := "❌ Произошла ошибка при отправке сообщения. Попробуйте снова."
+		errorMsgObj, sendErr := c.Bot().Send(c.Sender(), errorMsg)
+		if sendErr == nil {
+			messageManager.AddMessage(userId, errorMsgObj.ID)
+		}
 		return err
 	}
 
@@ -383,7 +405,6 @@ func bidTender(c telebot.Context, queries *db.Queries) error {
 
 	return nil
 }
-
 func handleMakeBid(c telebot.Context, queries *db.Queries) error {
 	data := c.Data()
 	parts := strings.Split(data, "|")
@@ -581,24 +602,44 @@ func handleBidText(c telebot.Context, queries *db.Queries, text string, userID i
 	case BidStateEnterPrice:
 		// Проверяем, что все необходимые данные существуют
 		if bidData[userID] == nil {
-			return c.Send("❌ Ошибка данных. Начните процесс подачи ставки заново.")
+			errorMsg := "❌ Ошибка данных. Начните процесс подачи ставки заново."
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		// Парсим введенную сумму
 		bidAmount, err := strconv.ParseFloat(text, 64)
 		if err != nil {
-			return c.Send("❌ Введите корректную сумму (например: 15000.50):")
+			errorMsg := "❌ Введите корректную сумму (например: 15000.50):"
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		// Безопасно получаем данные тендера с проверкой типов
 		currentPrice, ok := bidData[userID]["current_price"].(float64)
 		if !ok {
-			return c.Send("❌ Ошибка данных. Начните процесс подачи ставки заново.")
+			errorMsg := "❌ Ошибка данных. Начните процесс подачи ставки заново."
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		startPrice, ok := bidData[userID]["start_price"].(float64)
 		if !ok {
-			return c.Send("❌ Ошибка данных. Начните процесс подачи ставки заново.")
+			errorMsg := "❌ Ошибка данных. Начните процесс подачи ставки заново."
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		previousBids, ok := bidData[userID]["previous_bids"].([]db.TenderBid)
@@ -609,7 +650,12 @@ func handleBidText(c telebot.Context, queries *db.Queries, text string, userID i
 
 		tenderTitle, ok := bidData[userID]["tender_title"].(string)
 		if !ok {
-			return c.Send("❌ Ошибка данных. Начните процесс подачи ставки заново.")
+			errorMsg := "❌ Ошибка данных. Начните процесс подачи ставки заново."
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		// Вычисляем минимальную и максимальную ставки по вашей формуле
@@ -617,23 +663,38 @@ func handleBidText(c telebot.Context, queries *db.Queries, text string, userID i
 		maxBid := currentPrice - (startPrice * 0.1) // Исправленная формула
 
 		if bidAmount > minBid {
-			return c.Send(fmt.Sprintf(
+			errorMsg := fmt.Sprintf(
 				"❌ Ставка не может превышать %.2f руб. Введите другую сумму:",
 				minBid,
-			))
+			)
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		if bidAmount < maxBid {
-			return c.Send(fmt.Sprintf(
+			errorMsg := fmt.Sprintf(
 				"❌ Ставка не может быть меньше %.2f руб. Введите другую сумму:",
 				maxBid,
-			))
+			)
+			msg, err := c.Bot().Send(c.Sender(), errorMsg)
+			if err == nil {
+				messageManager.AddMessage(userID, msg.ID)
+			}
+			return err
 		}
 
 		// Проверяем, не делал ли пользователь такую же ставку ранее
 		for _, prevBid := range previousBids {
 			if prevBid.Amount == bidAmount {
-				return c.Send("❌ Вы уже делали ставку на эту сумму. Введите другую сумму:")
+				errorMsg := "❌ Вы уже делали ставку на эту сумму. Введите другую сумму:"
+				msg, err := c.Bot().Send(c.Sender(), errorMsg)
+				if err == nil {
+					messageManager.AddMessage(userID, msg.ID)
+				}
+				return err
 			}
 		}
 
@@ -688,6 +749,12 @@ func handleBidText(c telebot.Context, queries *db.Queries, text string, userID i
 
 		if err != nil {
 			fmt.Printf("Ошибка при отправке сообщения подтверждения: %v\n", err)
+			// Сохраняем сообщение об ошибке отправки
+			errorMsg := "❌ Произошла ошибка при отправке сообщения. Попробуйте снова."
+			errorMsgObj, sendErr := c.Bot().Send(c.Sender(), errorMsg)
+			if sendErr == nil {
+				messageManager.AddMessage(userID, errorMsgObj.ID)
+			}
 			return err
 		}
 
@@ -759,15 +826,18 @@ func handleConfirmBid(c telebot.Context, queries *db.Queries) error {
 		updatedTender.CurrentPrice = bidAmount
 	}
 
+	formattedBidAmount := formatPriceFloat(bidAmount)
+	formattedCurrentPrice := formatPriceFloat(updatedTender.CurrentPrice)
+
 	// Формируем сообщение для пользователя, который сделал ставку
 	message := fmt.Sprintf(
 		"✅ *Новая ставка успешно подана!*\n\n"+
 			"📋 Тендер: %s\n"+
-			"💰 Новая ставка: *%.2f руб.*\n"+
-			"💰 *Новая текущая цена тендера:* %.2f руб.\n",
+			"💰 Новая ставка: *%s руб.*\n"+
+			"💰 *Новая текущая цена тендера:* %s руб.\n",
 		tenderTitle,
-		bidAmount,
-		updatedTender.CurrentPrice,
+		formattedBidAmount,
+		formattedCurrentPrice,
 	)
 
 	if len(allBids) > 0 {
@@ -777,9 +847,10 @@ func handleConfirmBid(c telebot.Context, queries *db.Queries) error {
 			if bid.Amount == bidAmount {
 				indicator = " 🆕"
 			}
-			message += fmt.Sprintf("%d. %.2f руб. (%s)%s\n",
+			formattedAmount := formatPriceFloat(bid.Amount)
+			message += fmt.Sprintf("%d. %s руб. (%s)%s\n",
 				i+1,
-				bid.Amount,
+				formattedAmount,
 				bid.BidTime.Time.Format("02.01.2006 15:04"),
 				indicator)
 		}
