@@ -16,3 +16,9 @@ WHERE tender_id = $1 AND user_id = $2;
 UPDATE tenders 
 SET current_price = $2
 WHERE id = $1;
+
+-- name: GetBidsAfterTime :many
+SELECT * FROM tender_bids 
+WHERE tender_id = $1 AND bid_time > $2 
+ORDER BY bid_time DESC;
+

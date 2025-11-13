@@ -17,6 +17,7 @@ type Querier interface {
 	CreateTender(ctx context.Context, arg CreateTenderParams) (Tender, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteTender(ctx context.Context, id int32) error
+	GetBidsAfterTime(ctx context.Context, arg GetBidsAfterTimeParams) ([]TenderBid, error)
 	GetHistory(ctx context.Context) ([]Tender, error)
 	GetParticipantsForTender(ctx context.Context, tenderID int32) ([]int64, error)
 	GetStartingTenders(ctx context.Context) ([]GetStartingTendersRow, error)
@@ -32,7 +33,9 @@ type Querier interface {
 	GetUserByTelegramID(ctx context.Context, telegramID int64) (User, error)
 	JoinTender(ctx context.Context, arg JoinTenderParams) error
 	LeaveTender(ctx context.Context, arg LeaveTenderParams) error
+	RemoveParticipants(ctx context.Context, tenderID int32) error
 	UpdateTenderCurrentPrice(ctx context.Context, arg UpdateTenderCurrentPriceParams) error
+	UpdateTenderStatus(ctx context.Context, arg UpdateTenderStatusParams) error
 	UpdateUser(ctx context.Context, arg UpdateUserParams) error
 }
 

@@ -45,3 +45,12 @@ func (q *Queries) GetTenderFromParticipants(ctx context.Context, userID int64) (
 	err := row.Scan(&tender_id)
 	return tender_id, err
 }
+
+const removeParticipants = `-- name: RemoveParticipants :exec
+DELETE FROM tender_participants WHERE tender_id = $1
+`
+
+func (q *Queries) RemoveParticipants(ctx context.Context, tenderID int32) error {
+	_, err := q.db.Exec(ctx, removeParticipants, tenderID)
+	return err
+}

@@ -33,6 +33,43 @@ func (q *Queries) CreateBid(ctx context.Context, arg CreateBidParams) error {
 	return err
 }
 
+const getBidsAfterTime = `-- name: GetBidsAfterTime :many
+SELECT id, tender_id, user_id, amount, bid_time FROM tender_bids 
+WHERE tender_id = $1 AND bid_time > $2 
+ORDER BY bid_time DESC
+`
+
+type GetBidsAfterTimeParams struct {
+	TenderID int32              `json:"tender_id"`
+	BidTime  pgtype.Timestamptz `json:"bid_time"`
+}
+
+func (q *Queries) GetBidsAfterTime(ctx context.Context, arg GetBidsAfterTimeParams) ([]TenderBid, error) {
+	rows, err := q.db.Query(ctx, getBidsAfterTime, arg.TenderID, arg.BidTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TenderBid{}
+	for rows.Next() {
+		var i TenderBid
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenderID,
+			&i.UserID,
+			&i.Amount,
+			&i.BidTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserBidCount = `-- name: GetUserBidCount :one
 SELECT COUNT(*) FROM tender_bids
 WHERE tender_id = $1 AND user_id = $2

@@ -168,7 +168,7 @@ func (q *Queries) GetHistory(ctx context.Context) ([]Tender, error) {
 const getStartingTenders = `-- name: GetStartingTenders :many
 SELECT title, id, current_price, start_price 
 FROM tenders WHERE start_at <= NOW()
-AND status != 'active'
+AND status = 'active'
 `
 
 type GetStartingTendersRow struct {
@@ -451,5 +451,19 @@ type LeaveTenderParams struct {
 
 func (q *Queries) LeaveTender(ctx context.Context, arg LeaveTenderParams) error {
 	_, err := q.db.Exec(ctx, leaveTender, arg.ID, arg.UserID)
+	return err
+}
+
+const updateTenderStatus = `-- name: UpdateTenderStatus :exec
+UPDATE tenders SET status = $2 WHERE id = $1
+`
+
+type UpdateTenderStatusParams struct {
+	ID     int32  `json:"id"`
+	Status string `json:"status"`
+}
+
+func (q *Queries) UpdateTenderStatus(ctx context.Context, arg UpdateTenderStatusParams) error {
+	_, err := q.db.Exec(ctx, updateTenderStatus, arg.ID, arg.Status)
 	return err
 }

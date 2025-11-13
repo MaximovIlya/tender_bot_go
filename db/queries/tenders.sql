@@ -38,7 +38,7 @@ WHERE id = $1;
 -- name: GetStartingTenders :many
 SELECT title, id, current_price, start_price 
 FROM tenders WHERE start_at <= NOW()
-AND status != 'active';
+AND status = 'active';
 
 -- name: ActivatePendingTenders :exec
 UPDATE tenders 
@@ -90,3 +90,6 @@ SELECT EXISTS(
     WHERE user_id = $1 
     AND tender_id != $2  -- исключаем текущий тендер
 ) as has_participation;
+
+-- name: UpdateTenderStatus :exec
+UPDATE tenders SET status = $2 WHERE id = $1;

@@ -26,6 +26,14 @@ var messageManager = &MessageManager{
 	userMessages: make(map[int64][]int),
 }
 
+// Глобальная мапа для хранения таймеров
+var tenderTimers = struct {
+    sync.RWMutex
+    timers map[int32]*time.Timer
+}{
+    timers: make(map[int32]*time.Timer),
+}
+
 // Добавление сообщения в историю
 func (mm *MessageManager) AddMessage(userID int64, messageID int) {
 	mm.mu.Lock()
@@ -347,8 +355,16 @@ func bidTender(c telebot.Context, queries *db.Queries) error {
 	bidStates[userId] = BidStateEnterPrice
 
 	// Получаем минимально возможную ставку
-	minBid := tender.CurrentPrice - 10000.0
+	var minBid float64
+	if tender.CurrentPrice - 10000.0 >= 0 {
+		minBid = tender.CurrentPrice - 10000.0
+	} else {
+		minBid = 0
+	}
+
+	maxBid := tender.CurrentPrice - (tender.StartPrice * 0.1)
 	formattedMinBid := formatPriceFloat(minBid)
+	formattedMaxBid := formatPriceFloat(maxBid)
 	formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
 	formattedStartPrice := formatPriceFloat(tender.StartPrice)
 	
@@ -357,11 +373,12 @@ func bidTender(c telebot.Context, queries *db.Queries) error {
 		"📋 *Тендер:* %s\n"+
 			"💰 *Стартовая цена:* %s руб.\n"+
 			"💰 *Текущая цена:* %s руб.\n"+
-			"📉 *Минимальная ставка:* %s руб.\n",
+			"📊 *Диапазон ставок:* от %s до %s руб.\n",
 		tender.Title,
 		formattedStartPrice,
 		formattedCurrentPrice,
 		formattedMinBid,
+		formattedMaxBid,
 	)
 
 	// Добавляем информацию о предыдущих ставках
@@ -470,7 +487,14 @@ func handleMakeBid(c telebot.Context, queries *db.Queries) error {
 	bidStates[userID] = BidStateEnterPrice
 
 	// Вычисляем диапазон ставок по вашей формуле
-	minBid := tender.CurrentPrice - 10000.0
+
+	var minBid float64
+	if tender.CurrentPrice - 10000.0 >= 0 {
+		minBid = tender.CurrentPrice - 10000.0
+	} else {
+		minBid = 0
+	}
+	
 	maxBid := tender.CurrentPrice - (tender.StartPrice * 0.1)
 	formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
 	formattedStartPrice := formatPriceFloat(tender.StartPrice)
@@ -659,7 +683,13 @@ func handleBidText(c telebot.Context, queries *db.Queries, text string, userID i
 		}
 
 		// Вычисляем минимальную и максимальную ставки по вашей формуле
-		minBid := currentPrice - 10000.0
+		var minBid float64
+		if currentPrice - 10000.0 >= 0 {
+			minBid = currentPrice - 10000.0
+		} else {
+			minBid = 0
+		}
+		
 		maxBid := currentPrice - (startPrice * 0.1) // Исправленная формула
 
 		if bidAmount > minBid {
@@ -880,12 +910,20 @@ func handleConfirmBid(c telebot.Context, queries *db.Queries) error {
 		})
 	}
 
-	keyboardMsg, err := c.Bot().Send(c.Sender(), " ", &telebot.SendOptions{
-		ReplyMarkup: menu.MenuSupplierRegistered,
-	})
-	if err == nil {
-		messageManager.AddMessage(userID, keyboardMsg.ID)
-	}
+	// ЗАПУСКАЕМ ТАЙМЕР НА 30 МИНУТ ДЛЯ ПРОВЕРКИ ПОБЕДИТЕЛЯ
+	go startOrRestartTimer(c.Bot(), queries, tenderID, userID, bidAmount, tenderTitle)
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		
+		// Отправляем сообщение с текстом и клавиатурой
+		keyboardMsg, err := c.Bot().Send(c.Sender(), "⌨️ Используйте меню ниже для дальнейших действий", &telebot.SendOptions{
+			ReplyMarkup: menu.MenuSupplierRegistered,
+		})
+		if err == nil {
+			messageManager.AddMessage(userID, keyboardMsg.ID)
+		}
+	}()
 
 	// РАССЫЛАЕМ УВЕДОМЛЕНИЯ ДРУГИМ УЧАСТНИКАМ ТЕНДЕРА
 	go sendBidNotificationToOtherParticipants(c.Bot(), queries, tenderID, userID, tenderTitle, bidAmount, updatedTender.CurrentPrice)
@@ -894,11 +932,121 @@ func handleConfirmBid(c telebot.Context, queries *db.Queries) error {
 	delete(bidStates, userID)
 	delete(bidData, userID)
 
-	
-
 	messageManager.CleanupOldMessages(c.Bot(), userID, 2)
 
 	return c.Respond()
+}
+
+func startOrRestartTimer(bot *telebot.Bot, queries *db.Queries, tenderID int32, lastBidUserID int64, lastBidAmount float64, tenderTitle string) {
+    tenderTimers.Lock()
+    defer tenderTimers.Unlock()
+
+    // Если уже есть активный таймер для этого тендера - останавливаем его
+    if oldTimer, exists := tenderTimers.timers[tenderID]; exists {
+        oldTimer.Stop()
+        fmt.Printf("Таймер для тендера %d перезапущен\n", tenderID)
+    }
+
+    // Создаем новый таймер
+    timer := time.AfterFunc(2*time.Minute, func() {
+        declareWinner(bot, queries, tenderID, lastBidUserID, lastBidAmount, tenderTitle)
+        
+        // Удаляем таймер из мапы после выполнения
+        tenderTimers.Lock()
+        delete(tenderTimers.timers, tenderID)
+        tenderTimers.Unlock()
+    })
+
+    // Сохраняем новый таймер
+    tenderTimers.timers[tenderID] = timer
+    fmt.Printf("Таймер для тендера %d запущен на 2 минуты\n", tenderID)
+}
+
+// declareWinner объявляет победителя
+func declareWinner(bot *telebot.Bot, queries *db.Queries, tenderID int32, winnerUserID int64, winnerAmount float64, tenderTitle string) {
+    ctx := context.Background()
+
+    // Получаем информацию о победителе
+    winner, err := queries.GetUserByTelegramID(ctx, winnerUserID)
+    if err != nil {
+        fmt.Printf("Ошибка получения информации о победителе %d: %v\n", winnerUserID, err)
+        return
+    }
+
+    // Получаем всех участников тендера
+    participants, err := queries.GetParticipantsForTender(ctx, tenderID)
+    if err != nil {
+        fmt.Printf("Ошибка получения участников тендера %d: %v\n", tenderID, err)
+        return
+    }
+
+    // Форматируем цену
+    formattedAmount := formatPriceFloat(winnerAmount)
+
+    // Сообщение о победе
+    winnerMessage := fmt.Sprintf(
+        "🏆 *Тендер завершен!*\n\n"+
+            "📋 Тендер: %s\n"+
+            "👑 Победитель: %s\n"+
+            "💰 Выигрышная ставка: %s руб.\n\n"+
+            "🎉 Поздравляем победителя!",
+        tenderTitle,
+        winner.OrganizationName.String,
+        formattedAmount,
+    )
+
+    organizerMessage := fmt.Sprintf(
+        "🏆 *Ваш тендер завершен!*\n\n"+
+            "📋 Тендер: %s\n"+
+            "👑 Победитель: %s\n"+
+            "📞 Контакты победителя:\n"+
+            "   • Телефон: %s\n"+
+            "   • ИНН: %s\n"+
+            "   • ФИО: %s\n"+
+            "💰 Выигрышная ставка: %s руб.\n\n"+
+            "📞 Свяжитесь с победителем для оформления договора",
+        tenderTitle,
+        winner.OrganizationName.String,
+        winner.PhoneNumber.String,
+        winner.Inn.String,
+        winner.Name.String,
+        formattedAmount,
+    )
+
+    // Отправляем сообщение организатору
+    _, err = bot.Send(&telebot.User{ID: config.OrganizerID}, organizerMessage, &telebot.SendOptions{
+        ParseMode: telebot.ModeMarkdown,
+    })
+    if err != nil {
+        fmt.Printf("Ошибка отправки уведомления организатору %d: %v\n", config.OrganizerID, err)
+    }
+
+    // Рассылаем уведомление всем участникам
+    for _, participantID := range participants {
+        _, err := bot.Send(&telebot.User{ID: participantID}, winnerMessage, &telebot.SendOptions{
+            ParseMode: telebot.ModeMarkdown,
+        })
+        if err != nil {
+            fmt.Printf("Ошибка отправки уведомления пользователю %d: %v\n", participantID, err)
+        }
+        time.Sleep(100 * time.Millisecond)
+    }
+
+    // Обновляем статус тендера на завершенный
+    err = queries.UpdateTenderStatus(ctx, db.UpdateTenderStatusParams{
+        ID:     tenderID,
+        Status: "completed",
+    })
+    if err != nil {
+        fmt.Printf("Ошибка обновления статуса тендера %d: %v\n", tenderID, err)
+    }
+
+	err = queries.RemoveParticipants(ctx, tenderID)
+	if err != nil {
+		fmt.Printf("Ошибка удаления участников из тендера")
+	}
+
+    fmt.Printf("Тендер %d завершен. Победитель: %s (%d)\n", tenderID, winner.OrganizationName.String, winnerUserID)
 }
 
 // Функция для рассылки уведомлений другим участникам
@@ -1058,7 +1206,7 @@ func handleJoinTender(c telebot.Context, queries *db.Queries) error {
 	defer cancel()
 
 	// Получаем информацию о тендере для проверки статуса
-	tender, err := queries.GetTender(ctx, int32(tenderID))
+	_, err := queries.GetTender(ctx, int32(tenderID))
 	if err != nil {
 		return c.Respond(&telebot.CallbackResponse{
 			Text:      "❌ Ошибка получения информации о тендере",
@@ -1067,12 +1215,7 @@ func handleJoinTender(c telebot.Context, queries *db.Queries) error {
 	}
 
 	// Проверяем, активен ли тендер и начался ли он
-	if !isTenderActiveAndStarted(tender) {
-		return c.Respond(&telebot.CallbackResponse{
-			Text:      "❌ Тендер еще не начался или не активен",
-			ShowAlert: true,
-		})
-	}
+	
 
 	// Проверяем, участвует ли пользователь уже в других тендерах
 	hasOtherParticipation, err := queries.CheckUserHasAnyTenderParticipation(ctx, db.CheckUserHasAnyTenderParticipationParams{
