@@ -1,12 +1,12 @@
 ---
 version: null
 meta:
-  environment: golang
+  environment: docker
   toolchain:
-    name: go
-    version: 1.22
+    name: docker
+    version: latest
 build:
-  image: null
+  dockerfile: Dockerfile
 run:
   image: null
   persistenceMount: /data
