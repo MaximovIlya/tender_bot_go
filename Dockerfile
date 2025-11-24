@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 # Собираем приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -a -installsuffix cgo -o tender-bot .
+RUN CGO_ENABLED=0 GOOS=linux go build -o bot .
 
 # Runtime stage
 FROM gcr.io/distroless/static-debian11
@@ -19,8 +19,8 @@ FROM gcr.io/distroless/static-debian11
 WORKDIR /
 
 # Копируем бинарник
-COPY --from=builder /app/tender-bot /tender-bot
+COPY --from=builder /app/bot /bot
 COPY --from=builder /app/.env /.env
 
 # Запускаем приложение
-CMD ["/tender-bot"]
+CMD ["/bot"]
