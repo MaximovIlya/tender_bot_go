@@ -25,6 +25,7 @@ RUN apk add --no-cache ca-certificates && \
 # Копируем бинарник
 COPY --from=builder /app/bot /app/bot
 COPY --from=builder /app/.env /app/.env
+COPY --from=builder /app/db/migrations /app/db/migrations
 
 USER botuser
 
