@@ -121,7 +121,6 @@ func HandleOrganizerText(c telebot.Context, queries *db.Queries, text string, us
 		if err != nil {
 			log.Info("Failed to get db location")
 		}
-		log.Info(db_location)
 		location, err := time.LoadLocation(db_location)
 		if err != nil {
 			location = time.UTC

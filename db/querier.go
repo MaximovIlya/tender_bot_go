@@ -24,6 +24,7 @@ type Querier interface {
 	CreateTender(ctx context.Context, arg CreateTenderParams) (Tender, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteTender(ctx context.Context, id int32) error
+	DropDb(ctx context.Context) error
 	GetAllPendingUsers(ctx context.Context) ([]PendingUser, error)
 	GetAllUsers(ctx context.Context) ([]User, error)
 	GetBidsAfterTime(ctx context.Context, arg GetBidsAfterTimeParams) ([]TenderBid, error)
