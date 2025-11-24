@@ -29,6 +29,7 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool, msgManager Mes
 	// Каждые 5 минут
 	c.AddFunc("0 */5 * * * *", func() {
 		ctx := context.Background()
+		
 
 		// Активируем pending тендеры
 		err := queries.ActivatePendingTenders(ctx)

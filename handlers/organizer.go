@@ -11,6 +11,7 @@ import (
 	"tender_bot_go/menu"
 	"time"
 
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/telebot.v3"
@@ -113,7 +114,14 @@ func HandleOrganizerText(c telebot.Context, queries *db.Queries, text string, us
 			ReplyMarkup: menu.MenuOrganizerCancel,
 		})
 	case StateStartDate:
-		location, err := time.LoadLocation("Europe/Moscow")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		db_location, err := queries.TimeZone(ctx)
+		if err != nil {
+			log.Info("Failed to get db location")
+		}
+		log.Info(db_location)
+		location, err := time.LoadLocation(db_location)
 		if err != nil {
 			location = time.UTC
 		}

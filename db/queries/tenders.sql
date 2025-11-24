@@ -97,3 +97,6 @@ SELECT EXISTS(
 
 -- name: UpdateTenderStatus :exec
 UPDATE tenders SET status = $2 WHERE id = $1;
+
+-- name: TimeZone :one
+SELECT current_setting('TIMEZONE');

@@ -49,6 +49,7 @@ type Querier interface {
 	LeaveTender(ctx context.Context, arg LeaveTenderParams) error
 	MessageSent(ctx context.Context, id int32) error
 	RemoveParticipants(ctx context.Context, tenderID int32) error
+	TimeZone(ctx context.Context) (string, error)
 	UnblockUser(ctx context.Context, telegramID int64) error
 	UpdateTenderCurrentPrice(ctx context.Context, arg UpdateTenderCurrentPriceParams) error
 	UpdateTenderStatus(ctx context.Context, arg UpdateTenderStatusParams) error

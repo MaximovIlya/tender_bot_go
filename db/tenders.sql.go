@@ -471,6 +471,17 @@ func (q *Queries) MessageSent(ctx context.Context, id int32) error {
 	return err
 }
 
+const timeZone = `-- name: TimeZone :one
+SELECT current_setting('TIMEZONE')
+`
+
+func (q *Queries) TimeZone(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, timeZone)
+	var current_setting string
+	err := row.Scan(&current_setting)
+	return current_setting, err
+}
+
 const updateTenderStatus = `-- name: UpdateTenderStatus :exec
 UPDATE tenders SET status = $2 WHERE id = $1
 `
