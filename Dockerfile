@@ -13,14 +13,20 @@ COPY . .
 # Собираем приложение
 RUN CGO_ENABLED=0 GOOS=linux go build -o bot .
 
-# Runtime stage
-FROM gcr.io/distroless/static-debian11
+# Runtime stage (используем публичный Alpine, чтобы избежать авторизации в gcr.io)
+FROM alpine:3.20
 
-WORKDIR /
+WORKDIR /app
+
+# Устанавливаем сертификаты для https-запросов
+RUN apk add --no-cache ca-certificates && \
+    adduser -S -D -H botuser
 
 # Копируем бинарник
-COPY --from=builder /app/bot /bot
-COPY --from=builder /app/.env /.env
+COPY --from=builder /app/bot /app/bot
+COPY --from=builder /app/.env /app/.env
+
+USER botuser
 
 # Запускаем приложение
-CMD ["/bot"]
+ENTRYPOINT ["/app/bot"]
