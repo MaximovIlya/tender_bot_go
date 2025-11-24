@@ -44,7 +44,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	jobs.ActivatePendingTenders(bot, pool)
+	jobs.ActivatePendingTenders(bot, pool, handlers.MessageManagerOperator)
 
 	// ===== /start =====
 	bot.Handle("/start", func(c telebot.Context) error {
@@ -57,9 +57,20 @@ func main() {
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				role := "supplier"
-				if userID == settings.OrganizerID {
+
+				// Проверяем, является ли пользователь организатором
+				isOrganizer := false
+				for _, organizerID := range settings.OrganizerIDs {
+					if userID == organizerID {
+						isOrganizer = true
+						break
+					}
+				}
+
+				if isOrganizer {
 					role = "organizer"
 				} else {
+					// Проверяем, является ли пользователь админом
 					for _, adminID := range settings.AdminIDs {
 						if userID == adminID {
 							role = "admin"
@@ -100,21 +111,20 @@ func main() {
 			return c.Send("Для участия в тендерах необходимо зарегистрироваться.\nНажмите кнопку 'Регистрация'",
 				menu.MenuSupplierUnregistered)
 		case "admin":
-			return c.Send("Панель администратора", menu.MenuAdmin())
+			return c.Send("Панель администратора", menu.MenuAdmin)
 		default:
 			return c.Send("Роль пользователя неизвестна")
 		}
 	})
 
 	// ===== РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЕЙ =====
+	bot.Use(handlers.BlockedUserMiddleware(queries))
 	handlers.RegisterHandlers(bot, pool)
-	
 
 	bot.Start()
 }
 
 // Функция для проверки роли пользователя
-
 
 func runMigrations(databaseURL string) {
 	db, err := sql.Open("postgres", databaseURL)

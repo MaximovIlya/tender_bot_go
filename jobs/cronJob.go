@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"tender_bot_go/db"
-	"tender_bot_go/menu"
 	"tender_bot_go/settings"
 	"time"
 
@@ -18,7 +17,11 @@ import (
 
 var config = settings.LoadSettings()
 
-func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
+type MessageManager interface {
+	AddMessage(userID int64, messageID int)
+}
+
+func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool, msgManager MessageManager) {
 	queries := db.New(pool)
 
 	c := cron.New(cron.WithSeconds())
@@ -26,9 +29,14 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 	// Каждые 5 минут
 	c.AddFunc("0 */5 * * * *", func() {
 		ctx := context.Background()
-		
+
 		// Активируем pending тендеры
-		
+		err := queries.ActivatePendingTenders(ctx)
+		if err != nil {
+			log.Errorf("Failed to activate tenders: %v", err)
+			return
+		}
+		log.Info("Pending tenders activation check completed")
 
 		// Уведомления о начавшихся тендерах
 		startingTenders, err := queries.GetStartingTenders(ctx)
@@ -42,12 +50,12 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 		for _, tender := range startingTenders {
 			formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
 			messageForUsers := fmt.Sprintf(
-				"🎉 *Тендер начался!*\n\n" +
-				"Тендер *%s* начался. Вы можете подавать свои заявки на понижение цены\n" +
-				"📈 *Текущая цена:* %s руб.\n",
+				"🎉 *Тендер начался!*\n\n"+
+					"Тендер *%s* начался. Вы можете подавать свои ставки на понижение цены\n"+
+					"📈 *Текущая цена:* %s руб.\n",
 				tender.Title,
 				formattedCurrentPrice,
-			) 
+			)
 			messageForOrganizer := fmt.Sprintf(
 				"🎉 *Тендер начался!*\n\nТендер \"%s\" начался",
 				tender.Title,
@@ -55,14 +63,21 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 
 			tenderId := tender.ID
 
-			// Отправляем организатору
-			_, err = bot.Send(&telebot.User{ID: config.OrganizerID}, messageForOrganizer, &telebot.SendOptions{
-				ParseMode: telebot.ModeMarkdown,
-			})
+			err := queries.MessageSent(ctx, tenderId)
 			if err != nil {
-				log.Errorf("Failed to send notification to organizer %d: %v", config.OrganizerID, err)
-			} else {
-				log.Infof("Notification sent to organizer for tender %s", tender.Title)
+				log.Errorf("Failed to set message_sent to true")
+			}
+
+			// Отправляем организатору
+			for _, organizer := range config.OrganizerIDs {
+				_, err = bot.Send(&telebot.User{ID: organizer}, messageForOrganizer, &telebot.SendOptions{
+					ParseMode: telebot.ModeMarkdown,
+				})
+				if err != nil {
+					log.Errorf("Failed to send notification to organizer %d: %v", organizer, err)
+				} else {
+					log.Infof("Notification sent to organizer for tender %s", tender.Title)
+				}
 			}
 
 			// Получаем участников тендера
@@ -71,15 +86,27 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 				log.Errorf("Failed to get participants for tender %d: %v", tenderId, err)
 				continue // продолжаем со следующим тендером
 			}
-	
+
 			log.Infof("Tender %s has %d participants", tender.Title, len(userIds))
 
 			// Отправляем участникам
 			for _, userId := range userIds {
-				_, err := bot.Send(&telebot.User{ID: userId}, messageForUsers, &telebot.SendOptions{
+				inlineKeyboard := [][]telebot.InlineButton{
+					{
+						{
+							Unique: "make_bid",
+							Text:   "💵 Подать ставку",
+							Data:   fmt.Sprintf("%d|%d", tender.ID, userId),
+						},
+					},
+				}
+				msg, err := bot.Send(&telebot.User{ID: userId}, messageForUsers, &telebot.SendOptions{
 					ParseMode: telebot.ModeMarkdown,
-					ReplyMarkup: menu.MenuSupplierRegistered,
+					ReplyMarkup: &telebot.ReplyMarkup{
+						InlineKeyboard: inlineKeyboard,
+					},
 				})
+				msgManager.AddMessage(userId, msg.ID)
 				if err != nil {
 					log.Errorf("Failed to send notification to user %d: %v", userId, err)
 					time.Sleep(100 * time.Millisecond)
@@ -88,41 +115,42 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 				}
 			}
 		}
-	
-		// Уведомления о тендерах, которые начнутся через 5 минут
-		tenders, err := queries.GetTendersStartingIn5Minutes(ctx)
+
+		// Уведомления о тендерах, которые начнутся через 10 минут
+		tenders, err := queries.GetTendersStartingIn10Minutes(ctx)
 		if err != nil {
 			log.Errorf("Failed to get tenders starting in 5 minutes: %v", err)
 			return
 		}
-	
+
 		log.Infof("Found %d tenders starting in 5 minutes", len(tenders))
-	
+
 		for _, tender := range tenders {
 			message := fmt.Sprintf(
 				"🔔 *НАПОМИНАНИЕ О ТЕНДЕРЕ*\n\n"+
-				"📋 *Тендер:* %s\n"+
-				"⏰ *Начало через:* 5 минут\n"+
-				"🚀 *Будьте готовы к участию!*",
+					"📋 *Тендер:* %s\n"+
+					"⏰ *Начало через:* 5 минут\n"+
+					"🚀 *Будьте готовы к участию!*",
 				tender.Title,
 			)
-			
+
 			tenderId := tender.ID
-			
+
 			// Получаем участников тендера
 			userIds, err := queries.GetParticipantsForTender(ctx, tenderId)
 			if err != nil {
 				log.Errorf("Failed to get participants for tender %d: %v", tenderId, err)
 				continue // продолжаем со следующим тендером
 			}
-	
+
 			log.Infof("Tender %s has %d participants", tender.Title, len(userIds))
-	
+
 			// Отправляем сообщение каждому участнику
 			for _, userId := range userIds {
-				_, err := bot.Send(&telebot.User{ID: userId}, message, &telebot.SendOptions{
+				msg, err := bot.Send(&telebot.User{ID: userId}, message, &telebot.SendOptions{
 					ParseMode: telebot.ModeMarkdown,
 				})
+				msgManager.AddMessage(userId, msg.ID)
 				if err != nil {
 					log.Errorf("Failed to send notification to user %d: %v", userId, err)
 					time.Sleep(100 * time.Millisecond)
@@ -131,22 +159,12 @@ func ActivatePendingTenders(bot *telebot.Bot, pool *pgxpool.Pool) {
 				}
 			}
 		}
-		err = queries.ActivatePendingTenders(ctx)
-		if err != nil {
-			log.Errorf("Failed to activate tenders: %v", err)
-			return
-		}
-		log.Info("Pending tenders activation check completed")
 
-		
 	})
-
-	
 
 	c.Start()
 	log.Info("Tender activation job started - checking every 5 minutes")
 }
-
 
 // Функция для форматирования цены в финансовый формат (из строки)
 func formatPrice(priceStr string) string {

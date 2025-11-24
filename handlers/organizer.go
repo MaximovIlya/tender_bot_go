@@ -258,6 +258,7 @@ func HandleOrganizerDocument(c telebot.Context, queries *db.Queries, userID int6
 
 	return c.Send("Тендер успешно создан! Что хотите сделать дальше?", &telebot.SendOptions{
 		ParseMode: telebot.ModeMarkdown,
+		ReplyMarkup: menu.MenuOrganizer,
 	})
 }
 
@@ -339,7 +340,7 @@ func showOrganizerClassificationKeyboard(userID int64) *telebot.ReplyMarkup {
 
 	if selectedCode != "" {
 		rows = append(rows, []telebot.InlineButton{
-			{Unique: "org_class_done", Text: "Завершить выбор"},
+			{Unique: "org_class_done", Text: "✅ Завершить выбор"},
 		})
 	}
 
@@ -387,7 +388,6 @@ func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 		formattedPrice := formatPriceFloat(tender.StartPrice)
 
 		formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
-        
 
 		// Форматируем статус с эмодзи
 		statusEmoji, statusText := getStatusWithEmoji(tender.Status)
@@ -444,7 +444,6 @@ func sendTendersForDeletion(c telebot.Context, queries *db.Queries) error {
 		ReplyMarkup: menu.MenuOrganizer,
 	})
 }
-
 
 func saveTenderToDB(userID int64, queries *db.Queries, c telebot.Context) (string, int32, error) {
 	data := organizerData[userID]
@@ -688,13 +687,11 @@ func sendOrganizerTendersList(c telebot.Context, queries *db.Queries) error {
 	})
 }
 
-
-
 func sendOrganizerHistory(c telebot.Context, queries *db.Queries) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tenders, err := queries.GetHistory(ctx)
+	tenders, err := queries.GetTendersHistory(ctx)
 	if err != nil {
 		fmt.Printf("Ошибка при получении тендеров: %v\n", err)
 		return c.Send("❌ Не удалось загрузить историю", &telebot.SendOptions{
@@ -708,43 +705,54 @@ func sendOrganizerHistory(c telebot.Context, queries *db.Queries) error {
 		})
 	}
 	for _, tender := range tenders {
-		// Форматируем дату для красивого вывода
-		var formattedDate string
-		if tender.StartAt.Valid {
-			formattedDate = tender.StartAt.Time.Format("02.01.2006 15:04")
+		bidsHistory, err := queries.GetBidsHistoryByTenderID(ctx, tender.TenderID)
+		if err != nil {
+			fmt.Printf("Ошибка получения истории ставок для тендера %d: %v\n", tender.TenderID, err)
+		}
+
+		var bidsHistoryText string
+		if len(bidsHistory) > 0 {
+			bidsHistoryText = "\n\n📊 *История ставок:*\n"
+			for i, bid := range bidsHistory {
+				// Форматируем время
+				bidTime := bid.BidTime.Time.Format("02.01.2006 15:04")
+				// Форматируем сумму ставки
+				formattedBidAmount := formatPriceFloat(bid.Amount)
+
+				bidsHistoryText += fmt.Sprintf("%d. %s руб. - %s (%s)\n",
+					i+1,
+					formattedBidAmount,
+					bid.OrganizationName.String,
+					bidTime)
+			}
 		} else {
-			formattedDate = "не указана"
+			bidsHistoryText = "\n\n📊 *История ставок:*\nСтавки отсутствуют"
 		}
 
 		// Форматируем цену в финансовом формате
 		formattedPrice := formatPriceFloat(tender.StartPrice)
 
-		formattedCurrentPrice := formatPriceFloat(tender.CurrentPrice)
-
-		// Форматируем статус с эмодзи
-		statusEmoji, statusText := getStatusWithEmoji(tender.Status)
+		formattedBidPrice := formatPriceFloat(tender.Bid)
 
 		// Создаем сообщение с информацией о тендере
 		tenderInfo := fmt.Sprintf(
 			"📋 *Тендер*: %s\n\n"+
-				"📝 *Описание:* %s\n"+
 				"💰 *Стартовая цена:* %s руб.\n"+
-				"📈 *Финальная цена:* %s руб.\n"+
-				"📅 *Дата начала:* %s\n"+
-				"🗂️ *Классификация:* %s\n"+
-				"👥 *Участников:* %d\n"+
-				"%s *Статус:* %s\n\n"+
-				"🆔 ID: %d",
+				"💰 *Выигрышная ставка:* %s руб.\n"+
+				"👑 Победитель: %s\n"+
+				"📞 Контакты победителя:\n"+
+				"   • Телефон: %s\n"+
+				"   • ИНН: %s\n"+
+				"   • ФИО: %s\n"+
+				"%s",
 			tender.Title,
-			tender.Description.String,
 			formattedPrice,
-			formattedCurrentPrice,
-			formattedDate,
-			classificationNames[tender.Classification.String],
-			tender.ParticipantsCount,
-			statusEmoji,
-			statusText,
-			tender.ID,
+			formattedBidPrice,
+			tender.Winner.String,
+			tender.PhoneNumber.String,
+			tender.Inn.String,
+			tender.Fio.String,
+			bidsHistoryText,
 		)
 
 		// Отправляем информацию о тендере
@@ -756,40 +764,6 @@ func sendOrganizerHistory(c telebot.Context, queries *db.Queries) error {
 		}
 
 		// Если есть прикрепленный файл, отправляем его
-		if tender.ConditionsPath.Valid && tender.ConditionsPath.String != "" {
-			filePath := tender.ConditionsPath.String
-
-			// Проверяем существование файла
-			if _, err := os.Stat(filePath); err == nil {
-				// Отправляем сообщение о файле
-				if err := c.Send("📎 Файл с условиями тендера:"); err != nil {
-					fmt.Printf("Ошибка при отправке сообщения о файле: %v\n", err)
-					continue
-				}
-
-				// Отправляем сам файл
-				fileName := filepath.Base(filePath)
-				fileToSend := &telebot.Document{
-					File:     telebot.FromDisk(filePath),
-					FileName: fileName,
-				}
-
-				if err := c.Send(fileToSend); err != nil {
-					fmt.Printf("Ошибка при отправке файла тендера: %v\n", err)
-					// Продолжаем с следующим тендером даже если не удалось отправить файл
-				}
-			} else {
-				fmt.Printf("Файл не найден: %s\n", filePath)
-				if err := c.Send("❌ Файл условий недоступен"); err != nil {
-					fmt.Printf("Ошибка при отправке сообщения об отсутствии файла: %v\n", err)
-				}
-			}
-		} else {
-			// Если файла нет, отправляем сообщение об этом
-			if err := c.Send("📭 Файл условий не прикреплен"); err != nil {
-				fmt.Printf("Ошибка при отправке сообщения об отсутствии файла: %v\n", err)
-			}
-		}
 
 		// Добавляем разделитель между тендерами
 		if err := c.Send("➖➖➖➖➖➖➖➖➖➖"); err != nil {
@@ -804,4 +778,3 @@ func sendOrganizerHistory(c telebot.Context, queries *db.Queries) error {
 		ReplyMarkup: menu.MenuOrganizer,
 	})
 }
-

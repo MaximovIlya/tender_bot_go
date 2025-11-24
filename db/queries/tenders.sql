@@ -4,16 +4,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetTenders :many
-SELECT * FROM tenders ORDER BY created_at DESC;
+SELECT * FROM tenders WHERE status != 'completed' ORDER BY created_at DESC;
 
 -- name: GetTenderById :one
 SELECT * FROM tenders WHERE id = $1;
 
--- name: GetTendersStartingIn5Minutes :many
+-- name: GetTendersStartingIn10Minutes :many
 SELECT title, start_at, id
 FROM tenders 
 WHERE start_at IS NOT NULL 
-  AND start_at <= NOW() + INTERVAL '5 minutes'
+  AND start_at <= NOW() + INTERVAL '10 minutes'
   AND start_at > NOW()
 ORDER BY start_at ASC;
 
@@ -38,7 +38,11 @@ WHERE id = $1;
 -- name: GetStartingTenders :many
 SELECT title, id, current_price, start_price 
 FROM tenders WHERE start_at <= NOW()
-AND status = 'active';
+AND status = 'active' AND message_sent != true;
+
+-- name: MessageSent :exec 
+UPDATE tenders SET message_sent = true 
+WHERE id = $1;
 
 -- name: ActivatePendingTenders :exec
 UPDATE tenders 

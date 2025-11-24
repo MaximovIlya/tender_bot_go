@@ -1,1 +1,0 @@
-ALTER TABLE tender_bids DROP COLUMN bid_time;

@@ -11,7 +11,7 @@ import (
 type Settings struct {
     BotToken    string
     AdminIDs    []int64
-    OrganizerID int64
+    OrganizerIDs []int64
     DatabaseURL string
     FilesDir    string
 }
@@ -38,12 +38,18 @@ func LoadSettings() *Settings {
     }
 
     // Организатор
-    organizerIDStr := os.Getenv("ORGANIZER_ID")
-    organizerID, err := strconv.ParseInt(organizerIDStr, 10, 64)
-    if err != nil {
-        organizerID = 0
+    organizerIDsStr := os.Getenv("ORGANIZER_ID")
+    s.OrganizerIDs = []int64{}
+    for _, x := range strings.Split(organizerIDsStr, ",") {
+        x = strings.TrimSpace(x)
+        if x == "" {
+            continue
+        }
+        id, err := strconv.ParseInt(x, 10, 64)
+        if err == nil {
+            s.OrganizerIDs = append(s.OrganizerIDs, id)
+        }
     }
-    s.OrganizerID = organizerID
 
     // Остальное
     s.DatabaseURL = os.Getenv("DATABASE_URL")

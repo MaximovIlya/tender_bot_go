@@ -20,3 +20,16 @@ SET
     classification = $7
 WHERE telegram_id = $1;
 
+-- name: GetUsersByClassification :many
+SELECT telegram_id FROM users 
+WHERE $1 = ANY(string_to_array(classification, ','));
+
+
+-- name: GetAllUsers :many
+SELECT * FROM users WHERE role = 'supplier';
+
+-- name: BlockUser :exec
+UPDATE users SET banned = true WHERE telegram_id = $1;
+
+-- name: UnblockUser :exec
+UPDATE users SET banned = false WHERE telegram_id = $1;

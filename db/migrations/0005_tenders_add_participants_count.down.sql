@@ -1,1 +1,0 @@
-ALTER TABLE tendels DROP participants_count;

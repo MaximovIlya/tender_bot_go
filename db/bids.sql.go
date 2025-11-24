@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const checkBidExists = `-- name: CheckBidExists :one
+SELECT COUNT(*) as count
+FROM tender_bids 
+WHERE tender_id = $1 AND amount = $2
+`
+
+type CheckBidExistsParams struct {
+	TenderID int32   `json:"tender_id"`
+	Amount   float64 `json:"amount"`
+}
+
+func (q *Queries) CheckBidExists(ctx context.Context, arg CheckBidExistsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, checkBidExists, arg.TenderID, arg.Amount)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBid = `-- name: CreateBid :exec
 INSERT INTO tender_bids (tender_id, user_id, amount, bid_time) 
 VALUES ($1, $2, $3, $4)
@@ -60,6 +78,43 @@ func (q *Queries) GetBidsAfterTime(ctx context.Context, arg GetBidsAfterTimePara
 			&i.Amount,
 			&i.BidTime,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBidsHistoryByTenderID = `-- name: GetBidsHistoryByTenderID :many
+SELECT 
+    b.amount,
+    b.bid_time,
+    u.organization_name
+FROM tender_bids b
+JOIN users u ON b.user_id = u.telegram_id
+WHERE b.tender_id = $1
+ORDER BY b.bid_time ASC
+`
+
+type GetBidsHistoryByTenderIDRow struct {
+	Amount           float64            `json:"amount"`
+	BidTime          pgtype.Timestamptz `json:"bid_time"`
+	OrganizationName pgtype.Text        `json:"organization_name"`
+}
+
+func (q *Queries) GetBidsHistoryByTenderID(ctx context.Context, tenderID int32) ([]GetBidsHistoryByTenderIDRow, error) {
+	rows, err := q.db.Query(ctx, getBidsHistoryByTenderID, tenderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetBidsHistoryByTenderIDRow{}
+	for rows.Next() {
+		var i GetBidsHistoryByTenderIDRow
+		if err := rows.Scan(&i.Amount, &i.BidTime, &i.OrganizationName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

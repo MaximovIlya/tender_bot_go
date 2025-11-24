@@ -6,7 +6,7 @@ CREATE TABLE users (
     phone_number       VARCHAR(20),
     classification     VARCHAR(255),
     role               VARCHAR(15) NOT NULL,
-    banned             BOOLEAN DEFAULT FALSE, 
+    banned             BOOLEAN DEFAULT false, 
     name               VARCHAR(255) 
 );
 
@@ -21,6 +21,7 @@ CREATE TABLE tenders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     classification VARCHAR(255),
     participants_count INTEGER NOT NULL DEFAULT 0,
+    message_sent BOOLEAN DEFAULT false,
 
     
     last_bid_at TIMESTAMPTZ,              
@@ -32,7 +33,8 @@ CREATE TABLE tender_participants (
     id SERIAL PRIMARY KEY,
     tender_id INTEGER NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-    CONSTRAINT unique_event_participant UNIQUE(event_id, user_id)
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_event_participant UNIQUE(tender_id, user_id)
 );
 
 CREATE TABLE tender_bids (
@@ -41,4 +43,29 @@ CREATE TABLE tender_bids (
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     amount FLOAT NOT NULL,
     bid_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE history (
+    id SERIAL PRIMARY KEY,
+    tender_id INTEGER NOT NULL REFERENCES tenders(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    winner VARCHAR(255),
+    phone_number VARCHAR(20),
+    inn VARCHAR(12),
+    fio VARCHAR(255),
+    bid FLOAT NOT NULL,
+    start_price FLOAT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+CREATE TABLE pending_users (
+    id SERIAL PRIMARY KEY,
+    telegram_id BIGINT NOT NULL,
+    organization_name VARCHAR(255),
+    inn VARCHAR(12),
+    phone_number VARCHAR(20),
+    name VARCHAR(255),
+    classification VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

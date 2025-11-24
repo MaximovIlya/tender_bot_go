@@ -9,6 +9,29 @@ import (
 	"context"
 )
 
+const getParticipantNumber = `-- name: GetParticipantNumber :one
+SELECT COUNT(*) + 1 as participant_number
+FROM tender_participants tp1
+WHERE tp1.tender_id = $1 
+AND tp1.joined_at < (
+    SELECT joined_at 
+    FROM tender_participants tp2 
+    WHERE tp2.tender_id = $1 AND tp2.user_id = $2
+)
+`
+
+type GetParticipantNumberParams struct {
+	TenderID int32 `json:"tender_id"`
+	UserID   int64 `json:"user_id"`
+}
+
+func (q *Queries) GetParticipantNumber(ctx context.Context, arg GetParticipantNumberParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getParticipantNumber, arg.TenderID, arg.UserID)
+	var participant_number int32
+	err := row.Scan(&participant_number)
+	return participant_number, err
+}
+
 const getParticipantsForTender = `-- name: GetParticipantsForTender :many
 SELECT user_id FROM tender_participants 
 WHERE tender_id = $1

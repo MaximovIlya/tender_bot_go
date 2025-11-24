@@ -1,1 +1,0 @@
-ALTER TABLE tenders ADD participants_count INTEGER NOT NULL DEFAULT 0;

@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const blockUser = `-- name: BlockUser :exec
+UPDATE users SET banned = true WHERE telegram_id = $1
+`
+
+func (q *Queries) BlockUser(ctx context.Context, telegramID int64) error {
+	_, err := q.db.Exec(ctx, blockUser, telegramID)
+	return err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (telegram_id, organization_name, inn, ogrn, phone_number, classification, role, banned, name)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -56,6 +65,40 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const getAllUsers = `-- name: GetAllUsers :many
+SELECT telegram_id, organization_name, inn, ogrn, phone_number, classification, role, banned, name FROM users WHERE role = 'supplier'
+`
+
+func (q *Queries) GetAllUsers(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, getAllUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.TelegramID,
+			&i.OrganizationName,
+			&i.Inn,
+			&i.Ogrn,
+			&i.PhoneNumber,
+			&i.Classification,
+			&i.Role,
+			&i.Banned,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserByTelegramID = `-- name: GetUserByTelegramID :one
 SELECT telegram_id, organization_name, inn, ogrn, phone_number, classification, role, banned, name
 FROM users
@@ -77,6 +120,40 @@ func (q *Queries) GetUserByTelegramID(ctx context.Context, telegramID int64) (Us
 		&i.Name,
 	)
 	return i, err
+}
+
+const getUsersByClassification = `-- name: GetUsersByClassification :many
+SELECT telegram_id FROM users 
+WHERE $1 = ANY(string_to_array(classification, ','))
+`
+
+func (q *Queries) GetUsersByClassification(ctx context.Context, classification pgtype.Text) ([]int64, error) {
+	rows, err := q.db.Query(ctx, getUsersByClassification, classification)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var telegram_id int64
+		if err := rows.Scan(&telegram_id); err != nil {
+			return nil, err
+		}
+		items = append(items, telegram_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unblockUser = `-- name: UnblockUser :exec
+UPDATE users SET banned = false WHERE telegram_id = $1
+`
+
+func (q *Queries) UnblockUser(ctx context.Context, telegramID int64) error {
+	_, err := q.db.Exec(ctx, unblockUser, telegramID)
+	return err
 }
 
 const updateUser = `-- name: UpdateUser :exec

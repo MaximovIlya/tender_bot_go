@@ -48,22 +48,19 @@ var MenuSupplierUnregistered = &telebot.ReplyMarkup {
 
 
 
-func MenuAdmin() *telebot.ReplyMarkup {
-	menu := &telebot.ReplyMarkup{
-        ResizeKeyboard:  true,  
-        OneTimeKeyboard: false, 
-    }
-
-    menu.Reply(
-        menu.Row(
-            menu.Text("Пользоавтели"),
-            menu.Text("Одобрить тендер"),
-        ),
-        menu.Row(
-            menu.Text("История"),
-        ),
-    )
-	return menu
+var MenuAdmin = &telebot.ReplyMarkup {
+	ReplyKeyboard: [][]telebot.ReplyButton{
+        {
+            {Text: "Пользователи"},
+            {Text: "Заявки на регистрацию"},
+            
+		},
+        {
+            {Text: "История"},
+        },
+    },
+    ResizeKeyboard: true,
+    OneTimeKeyboard: false,
 }
 
 var BtnDeleteTender = telebot.InlineButton{

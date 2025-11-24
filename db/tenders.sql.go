@@ -76,7 +76,7 @@ func (q *Queries) CheckUserHasAnyTenderParticipation(ctx context.Context, arg Ch
 const createTender = `-- name: CreateTender :one
 INSERT INTO tenders(title, description, start_price, start_at, conditions_path, current_price, classification)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease
+RETURNING id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease
 `
 
 type CreateTenderParams struct {
@@ -111,6 +111,7 @@ func (q *Queries) CreateTender(ctx context.Context, arg CreateTenderParams) (Ten
 		&i.CreatedAt,
 		&i.Classification,
 		&i.ParticipantsCount,
+		&i.MessageSent,
 		&i.LastBidAt,
 		&i.CurrentPrice,
 		&i.MinBidDecrease,
@@ -128,7 +129,7 @@ func (q *Queries) DeleteTender(ctx context.Context, id int32) error {
 }
 
 const getHistory = `-- name: GetHistory :many
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE status = 'completed' ORDER BY created_at DESC
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE status = 'completed' ORDER BY created_at DESC
 `
 
 func (q *Queries) GetHistory(ctx context.Context) ([]Tender, error) {
@@ -151,6 +152,7 @@ func (q *Queries) GetHistory(ctx context.Context) ([]Tender, error) {
 			&i.CreatedAt,
 			&i.Classification,
 			&i.ParticipantsCount,
+			&i.MessageSent,
 			&i.LastBidAt,
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
@@ -168,7 +170,7 @@ func (q *Queries) GetHistory(ctx context.Context) ([]Tender, error) {
 const getStartingTenders = `-- name: GetStartingTenders :many
 SELECT title, id, current_price, start_price 
 FROM tenders WHERE start_at <= NOW()
-AND status = 'active'
+AND status = 'active' AND message_sent != true
 `
 
 type GetStartingTendersRow struct {
@@ -204,7 +206,7 @@ func (q *Queries) GetStartingTenders(ctx context.Context) ([]GetStartingTendersR
 }
 
 const getTender = `-- name: GetTender :one
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE id = $1
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE id = $1
 `
 
 func (q *Queries) GetTender(ctx context.Context, id int32) (Tender, error) {
@@ -221,6 +223,7 @@ func (q *Queries) GetTender(ctx context.Context, id int32) (Tender, error) {
 		&i.CreatedAt,
 		&i.Classification,
 		&i.ParticipantsCount,
+		&i.MessageSent,
 		&i.LastBidAt,
 		&i.CurrentPrice,
 		&i.MinBidDecrease,
@@ -229,7 +232,7 @@ func (q *Queries) GetTender(ctx context.Context, id int32) (Tender, error) {
 }
 
 const getTenderById = `-- name: GetTenderById :one
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE id = $1
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE id = $1
 `
 
 func (q *Queries) GetTenderById(ctx context.Context, id int32) (Tender, error) {
@@ -246,6 +249,7 @@ func (q *Queries) GetTenderById(ctx context.Context, id int32) (Tender, error) {
 		&i.CreatedAt,
 		&i.Classification,
 		&i.ParticipantsCount,
+		&i.MessageSent,
 		&i.LastBidAt,
 		&i.CurrentPrice,
 		&i.MinBidDecrease,
@@ -254,7 +258,7 @@ func (q *Queries) GetTenderById(ctx context.Context, id int32) (Tender, error) {
 }
 
 const getTenders = `-- name: GetTenders :many
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders ORDER BY created_at DESC
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders WHERE status != 'completed' ORDER BY created_at DESC
 `
 
 func (q *Queries) GetTenders(ctx context.Context) ([]Tender, error) {
@@ -277,6 +281,7 @@ func (q *Queries) GetTenders(ctx context.Context) ([]Tender, error) {
 			&i.CreatedAt,
 			&i.Classification,
 			&i.ParticipantsCount,
+			&i.MessageSent,
 			&i.LastBidAt,
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
@@ -292,7 +297,7 @@ func (q *Queries) GetTenders(ctx context.Context) ([]Tender, error) {
 }
 
 const getTendersForDeletion = `-- name: GetTendersForDeletion :many
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders 
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders 
 WHERE status != 'completed' 
 ORDER BY created_at DESC
 `
@@ -317,6 +322,7 @@ func (q *Queries) GetTendersForDeletion(ctx context.Context) ([]Tender, error) {
 			&i.CreatedAt,
 			&i.Classification,
 			&i.ParticipantsCount,
+			&i.MessageSent,
 			&i.LastBidAt,
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
@@ -332,7 +338,7 @@ func (q *Queries) GetTendersForDeletion(ctx context.Context) ([]Tender, error) {
 }
 
 const getTendersForSuppliers = `-- name: GetTendersForSuppliers :many
-SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, last_bid_at, current_price, min_bid_decrease FROM tenders 
+SELECT id, title, description, start_price, start_at, status, conditions_path, created_at, classification, participants_count, message_sent, last_bid_at, current_price, min_bid_decrease FROM tenders 
 WHERE (status = 'active' OR status = 'active_pending')
 AND (classification = $1 OR classification = $2)
 `
@@ -362,6 +368,7 @@ func (q *Queries) GetTendersForSuppliers(ctx context.Context, arg GetTendersForS
 			&i.CreatedAt,
 			&i.Classification,
 			&i.ParticipantsCount,
+			&i.MessageSent,
 			&i.LastBidAt,
 			&i.CurrentPrice,
 			&i.MinBidDecrease,
@@ -376,30 +383,30 @@ func (q *Queries) GetTendersForSuppliers(ctx context.Context, arg GetTendersForS
 	return items, nil
 }
 
-const getTendersStartingIn5Minutes = `-- name: GetTendersStartingIn5Minutes :many
+const getTendersStartingIn10Minutes = `-- name: GetTendersStartingIn10Minutes :many
 SELECT title, start_at, id
 FROM tenders 
 WHERE start_at IS NOT NULL 
-  AND start_at <= NOW() + INTERVAL '5 minutes'
+  AND start_at <= NOW() + INTERVAL '10 minutes'
   AND start_at > NOW()
 ORDER BY start_at ASC
 `
 
-type GetTendersStartingIn5MinutesRow struct {
+type GetTendersStartingIn10MinutesRow struct {
 	Title   string             `json:"title"`
 	StartAt pgtype.Timestamptz `json:"start_at"`
 	ID      int32              `json:"id"`
 }
 
-func (q *Queries) GetTendersStartingIn5Minutes(ctx context.Context) ([]GetTendersStartingIn5MinutesRow, error) {
-	rows, err := q.db.Query(ctx, getTendersStartingIn5Minutes)
+func (q *Queries) GetTendersStartingIn10Minutes(ctx context.Context) ([]GetTendersStartingIn10MinutesRow, error) {
+	rows, err := q.db.Query(ctx, getTendersStartingIn10Minutes)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetTendersStartingIn5MinutesRow{}
+	items := []GetTendersStartingIn10MinutesRow{}
 	for rows.Next() {
-		var i GetTendersStartingIn5MinutesRow
+		var i GetTendersStartingIn10MinutesRow
 		if err := rows.Scan(&i.Title, &i.StartAt, &i.ID); err != nil {
 			return nil, err
 		}
@@ -451,6 +458,16 @@ type LeaveTenderParams struct {
 
 func (q *Queries) LeaveTender(ctx context.Context, arg LeaveTenderParams) error {
 	_, err := q.db.Exec(ctx, leaveTender, arg.ID, arg.UserID)
+	return err
+}
+
+const messageSent = `-- name: MessageSent :exec
+UPDATE tenders SET message_sent = true 
+WHERE id = $1
+`
+
+func (q *Queries) MessageSent(ctx context.Context, id int32) error {
+	_, err := q.db.Exec(ctx, messageSent, id)
 	return err
 }
 

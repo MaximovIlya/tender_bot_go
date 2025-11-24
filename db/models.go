@@ -8,6 +8,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type History struct {
+	ID          int32              `json:"id"`
+	TenderID    int32              `json:"tender_id"`
+	Title       string             `json:"title"`
+	Winner      pgtype.Text        `json:"winner"`
+	PhoneNumber pgtype.Text        `json:"phone_number"`
+	Inn         pgtype.Text        `json:"inn"`
+	Fio         pgtype.Text        `json:"fio"`
+	Bid         float64            `json:"bid"`
+	StartPrice  float64            `json:"start_price"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type PendingUser struct {
+	ID               int32              `json:"id"`
+	TelegramID       int64              `json:"telegram_id"`
+	OrganizationName pgtype.Text        `json:"organization_name"`
+	Inn              pgtype.Text        `json:"inn"`
+	PhoneNumber      pgtype.Text        `json:"phone_number"`
+	Name             pgtype.Text        `json:"name"`
+	Classification   pgtype.Text        `json:"classification"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type Tender struct {
 	ID                int32              `json:"id"`
 	Title             string             `json:"title"`
@@ -19,6 +43,7 @@ type Tender struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	Classification    pgtype.Text        `json:"classification"`
 	ParticipantsCount int32              `json:"participants_count"`
+	MessageSent       pgtype.Bool        `json:"message_sent"`
 	LastBidAt         pgtype.Timestamptz `json:"last_bid_at"`
 	CurrentPrice      float64            `json:"current_price"`
 	MinBidDecrease    float64            `json:"min_bid_decrease"`
@@ -33,9 +58,10 @@ type TenderBid struct {
 }
 
 type TenderParticipant struct {
-	ID       int32 `json:"id"`
-	TenderID int32 `json:"tender_id"`
-	UserID   int64 `json:"user_id"`
+	ID       int32              `json:"id"`
+	TenderID int32              `json:"tender_id"`
+	UserID   int64              `json:"user_id"`
+	JoinedAt pgtype.Timestamptz `json:"joined_at"`
 }
 
 type User struct {

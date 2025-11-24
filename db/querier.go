@@ -6,20 +6,32 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	ActivatePendingTenders(ctx context.Context) error
+	AddToHistory(ctx context.Context, arg AddToHistoryParams) error
+	ApprovePendingUser(ctx context.Context, telegramID int64) error
 	ApproveTender(ctx context.Context, id int32) error
+	BlockUser(ctx context.Context, telegramID int64) error
+	CheckBidExists(ctx context.Context, arg CheckBidExistsParams) (int64, error)
 	CheckTenderParticipation(ctx context.Context, arg CheckTenderParticipationParams) (bool, error)
 	CheckUserHasAnyTenderParticipation(ctx context.Context, arg CheckUserHasAnyTenderParticipationParams) (bool, error)
 	CreateBid(ctx context.Context, arg CreateBidParams) error
+	CreatePendingUser(ctx context.Context, arg CreatePendingUserParams) error
 	CreateTender(ctx context.Context, arg CreateTenderParams) (Tender, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteTender(ctx context.Context, id int32) error
+	GetAllPendingUsers(ctx context.Context) ([]PendingUser, error)
+	GetAllUsers(ctx context.Context) ([]User, error)
 	GetBidsAfterTime(ctx context.Context, arg GetBidsAfterTimeParams) ([]TenderBid, error)
+	GetBidsHistoryByTenderID(ctx context.Context, tenderID int32) ([]GetBidsHistoryByTenderIDRow, error)
 	GetHistory(ctx context.Context) ([]Tender, error)
+	GetParticipantNumber(ctx context.Context, arg GetParticipantNumberParams) (int32, error)
 	GetParticipantsForTender(ctx context.Context, tenderID int32) ([]int64, error)
+	GetPendingUser(ctx context.Context, telegramID int64) (PendingUser, error)
 	GetStartingTenders(ctx context.Context) ([]GetStartingTendersRow, error)
 	GetTender(ctx context.Context, id int32) (Tender, error)
 	GetTenderById(ctx context.Context, id int32) (Tender, error)
@@ -27,13 +39,17 @@ type Querier interface {
 	GetTenders(ctx context.Context) ([]Tender, error)
 	GetTendersForDeletion(ctx context.Context) ([]Tender, error)
 	GetTendersForSuppliers(ctx context.Context, arg GetTendersForSuppliersParams) ([]Tender, error)
-	GetTendersStartingIn5Minutes(ctx context.Context) ([]GetTendersStartingIn5MinutesRow, error)
+	GetTendersHistory(ctx context.Context) ([]History, error)
+	GetTendersStartingIn10Minutes(ctx context.Context) ([]GetTendersStartingIn10MinutesRow, error)
 	GetUserBidCount(ctx context.Context, arg GetUserBidCountParams) (int64, error)
 	GetUserBidsForTender(ctx context.Context, arg GetUserBidsForTenderParams) ([]TenderBid, error)
 	GetUserByTelegramID(ctx context.Context, telegramID int64) (User, error)
+	GetUsersByClassification(ctx context.Context, classification pgtype.Text) ([]int64, error)
 	JoinTender(ctx context.Context, arg JoinTenderParams) error
 	LeaveTender(ctx context.Context, arg LeaveTenderParams) error
+	MessageSent(ctx context.Context, id int32) error
 	RemoveParticipants(ctx context.Context, tenderID int32) error
+	UnblockUser(ctx context.Context, telegramID int64) error
 	UpdateTenderCurrentPrice(ctx context.Context, arg UpdateTenderCurrentPriceParams) error
 	UpdateTenderStatus(ctx context.Context, arg UpdateTenderStatusParams) error
 	UpdateUser(ctx context.Context, arg UpdateUserParams) error
