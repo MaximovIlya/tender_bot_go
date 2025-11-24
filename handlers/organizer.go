@@ -117,6 +117,7 @@ func HandleOrganizerText(c telebot.Context, queries *db.Queries, text string, us
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		db_location, err := queries.TimeZone(ctx)
+		log.Info(db_location)
 		if err != nil {
 			log.Info("Failed to get db location")
 		}
